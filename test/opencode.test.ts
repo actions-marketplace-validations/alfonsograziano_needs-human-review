@@ -1,0 +1,52 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { opencodeConfig, parseEvents, readFromToolPart } from '../src/harness/opencode.ts';
+
+// Shape copied from a real `opencode run --format json` run (OpenCode 2.0.20).
+const events = [
+  { type: 'step_start', part: { type: 'step-start', messageID: 'm1' } },
+  {
+    type: 'tool_use',
+    part: {
+      messageID: 'm1',
+      type: 'tool',
+      tool: 'read',
+      state: { status: 'completed', input: { path: 'src/a.ts' }, output: 'Read file src/a.ts, lines 1-2000\n1: x' },
+    },
+  },
+  {
+    type: 'tool_use',
+    part: { messageID: 'm1', type: 'tool', tool: 'read', state: { status: 'error', input: { path: 'secret.ts' }, output: '' } },
+  },
+  { type: 'step_finish', part: { type: 'step-finish', cost: 0.002, tokens: { input: 12000, output: 40 } } },
+  { type: 'text', part: { messageID: 'm1', type: 'text', text: 'Thinking out loud.' } },
+  { type: 'text', part: { messageID: 'm2', type: 'text', text: '{"decision":' } },
+  { type: 'text', part: { messageID: 'm2', type: 'text', text: '"safe"}' } },
+  { type: 'step_finish', part: { type: 'step-finish', cost: 0.001, tokens: { input: 13000, output: 60 } } },
+];
+const stdout = `${events.map((e) => JSON.stringify(e)).join('\n')}\n`;
+
+test('parseEvents takes reads from completed read calls, and the last message as the answer', () => {
+  const p = parseEvents('/work', stdout);
+  assert.deepEqual(p.reads, [{ path: 'src/a.ts', fromLine: 1, toLine: 2000 }]);
+  assert.equal(p.finalText, '{"decision":"safe"}');
+  assert.equal(Math.round(p.costUsd * 1000), 3);
+  assert.deepEqual(p.tokens, { input: 25000, output: 100 });
+});
+
+test('absolute read paths become relative to the workdir', () => {
+  const r = readFromToolPart('/work/repo', {
+    tool: 'read',
+    state: { status: 'completed', input: { filePath: '/work/repo/src/b.ts', offset: 10, limit: 5 }, output: 'no header' },
+  });
+  assert.deepEqual(r, { path: 'src/b.ts', fromLine: 10, toLine: 14 });
+});
+
+test('only read, grep and glob are allowed, after a deny-all rule', () => {
+  const cfg = opencodeConfig('SYSTEM') as { agents: Record<string, { system: string; permissions: { action: string; effect: string }[] }> };
+  const agent = cfg.agents['risk-scorer'];
+  assert.equal(agent?.system, 'SYSTEM');
+  assert.deepEqual(agent?.permissions[0], { action: '*', resource: '*', effect: 'deny' });
+  const allowed = agent?.permissions.filter((p) => p.effect === 'allow').map((p) => p.action);
+  assert.deepEqual(allowed, ['read', 'grep', 'glob']);
+});
