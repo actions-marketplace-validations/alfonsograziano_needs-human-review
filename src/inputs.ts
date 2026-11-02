@@ -102,7 +102,7 @@ export function readConfig(env: Env): Config {
   const config: Config = {
     mode: oneOf('mode', ['shadow', 'advisory', 'autonomous'] as const, 'shadow'),
     harness: oneOf('harness', ['opencode', 'fake'] as const, 'opencode'),
-    model: raw(env, 'model') || 'opencode/deepseek-v4.1-flash',
+    model: raw(env, 'model') || 'opencode-go/deepseek-v4.1-flash',
     githubToken: raw(env, 'github-token'),
     protectedPaths: globs('protected-paths'),
     selfProtectedPaths: globs('self-protected-paths'),

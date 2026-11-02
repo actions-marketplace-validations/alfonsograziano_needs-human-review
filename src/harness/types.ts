@@ -7,7 +7,7 @@ export interface HarnessInput {
   userMessage: string;
   /** Read-only repo at the head SHA, with the review folder inside. */
   workdir: string;
-  /** Model in the harness's format, for example "opencode/deepseek-v4.1-flash". */
+  /** Model in the harness's format, for example "opencode-go/deepseek-v4.1-flash". */
   model: string;
   timeoutMs: number;
 }

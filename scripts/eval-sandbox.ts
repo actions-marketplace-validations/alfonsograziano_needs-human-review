@@ -18,7 +18,8 @@ const { values } = parseArgs({ options: { model: { type: 'string' }, only: { typ
 const config = readConfig({
   INPUT_MODE: 'shadow',
   INPUT_PROTECTED_PATHS: 'src/payments/**',
-  ...(values.model ? { INPUT_MODEL: values.model } : {}),
+  // Local runs use the console login, which serves Go models as `opencode/...`.
+  INPUT_MODEL: values.model ?? 'opencode/deepseek-v4.1-flash',
 });
 
 const root = await mkdtemp(join(tmpdir(), 'ars-eval-'));

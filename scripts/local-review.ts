@@ -43,8 +43,9 @@ if (values.help) {
   process.exit(0);
 }
 
-const env: Record<string, string> = { INPUT_MODE: values.mode };
-if (values.model) env.INPUT_MODEL = values.model;
+// Locally OpenCode uses your console login, which serves Go models under the
+// `opencode` provider. In CI an OPENCODE_API_KEY Go key uses `opencode-go`.
+const env: Record<string, string> = { INPUT_MODE: values.mode, INPUT_MODEL: values.model ?? 'opencode/deepseek-v4.1-flash' };
 if (values.protected.length > 0) env.INPUT_PROTECTED_PATHS = values.protected.join('\n');
 if (values['max-lines']) env.INPUT_MAX_LINES_CHANGED = values['max-lines'];
 if (values['max-files']) env.INPUT_MAX_FILES_CHANGED = values['max-files'];

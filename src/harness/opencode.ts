@@ -161,8 +161,11 @@ export class OpenCodeHarness implements Harness {
         clearTimeout(timer);
         const raw = stdout;
         if (timedOut) return reject(new HarnessError(`timed out after ${Math.round(input.timeoutMs / 60_000)} minutes`, raw));
-        if (code !== 0) return reject(new HarnessError(`opencode exited with code ${code}: ${stderr.trim().slice(-500)}`, raw));
         const parsed = parseEvents(input.workdir, stdout);
+        if (code !== 0) {
+          const why = [...parsed.errors, stderr.trim().slice(-500)].filter((s) => s !== '').join('; ') || 'no error message';
+          return reject(new HarnessError(`opencode exited with code ${code}: ${why}`, raw));
+        }
         if (parsed.errors.length > 0) return reject(new HarnessError(`opencode reported an error: ${parsed.errors.join('; ')}`, raw));
         if (parsed.finalText.trim() === '') return reject(new HarnessError('the model gave no final answer', raw));
         resolve({

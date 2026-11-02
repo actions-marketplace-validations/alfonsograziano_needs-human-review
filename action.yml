@@ -14,7 +14,7 @@ inputs:
     default: opencode
   model:
     description: Model in OpenCode format, provider/model
-    default: opencode/deepseek-v4.1-flash
+    default: opencode-go/deepseek-v4.1-flash
   opencode-version:
     description: OpenCode release to install from github.com/anomalyco/opencode
     default: 2.2.5
