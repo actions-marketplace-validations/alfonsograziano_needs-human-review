@@ -658,6 +658,7 @@ These came out of building and testing, and the sections above already reflect t
 - **Only generated files.** A PR that changes only generated files (for example a lock file bump) has nothing for the AI to read, so it needs a human.
 - **Fake review folders.** `.ai-risk-scorer-*/**` is on the self-protected list. A PR that ships a folder shaped like the review folder is trying to fool the reviewer. The workspace also refuses it, as a second lock.
 - **Labels need `issues: write`.** PR labels are issue labels, so the example workflow asks for it.
+- **Wait for GitHub App checks.** On the demo repo, a GitGuardian check was still running when the scorer looked. App checks do not start a `workflow_run` when they finish, so the scorer would never run again. The action now waits up to `ci-wait-minutes` (default 10) for pending checks, and if they are still pending, comments that a human must check.
 - **Unexpected errors fail the job.** If something breaks that the action did not plan for, nothing is merged and the job fails, so the team sees it.
 
 ## Appendix A. Default system prompt (draft)

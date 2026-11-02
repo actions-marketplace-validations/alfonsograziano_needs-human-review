@@ -24,6 +24,8 @@ export interface Config {
   sliceTimeoutMinutes: number;
   timeoutMinutes: number;
   requiredChecks: string[];
+  /** How long to wait for checks that are still running, such as GitHub App checks. */
+  ciWaitMinutes: number;
   baseBranches: string[];
   allowForks: boolean;
   skipLabel: string;
@@ -122,6 +124,7 @@ export function readConfig(env: Env): Config {
     sliceTimeoutMinutes: int('slice-timeout-minutes', 10, 1, 120),
     timeoutMinutes: int('timeout-minutes', 30, 1, 360),
     requiredChecks: parseList(raw(env, 'required-checks')),
+    ciWaitMinutes: int('ci-wait-minutes', 10, 0, 60),
     baseBranches: parseList(raw(env, 'base-branches')),
     allowForks: bool('allow-forks', false),
     skipLabel: raw(env, 'skip-label') || 'ai-risk-scorer:skip',

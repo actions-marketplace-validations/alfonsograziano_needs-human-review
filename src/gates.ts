@@ -112,6 +112,25 @@ export type CiState = { state: 'green' } | { state: 'pending'; names: string[] }
 
 const OK_CONCLUSIONS = new Set(['success', 'neutral', 'skipped']);
 
+/**
+ * Polls until CI is no longer pending, or the wait runs out. Checks from
+ * GitHub Apps (security scanners, for example) do not start a workflow_run
+ * when they finish, so the action has to wait for them itself.
+ */
+export async function waitForCi(
+  read: () => Promise<CiState>,
+  waitMs: number,
+  pollMs = 20_000,
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+): Promise<CiState> {
+  let state = await read();
+  for (let tries = Math.floor(waitMs / pollMs); state.state === 'pending' && tries > 0; tries--) {
+    await sleep(pollMs);
+    state = await read();
+  }
+  return state;
+}
+
 /** G1: every other check on the head SHA must be green. The scorer's own check is ignored. */
 export function ciState(checks: CheckState[], ownNames: string[], required: string[]): CiState {
   const others = checks.filter((c) => !ownNames.includes(c.name));

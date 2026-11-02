@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ciState, runHardGates } from '../src/gates.ts';
+import { ciState, runHardGates, waitForCi, type CiState } from '../src/gates.ts';
 import { file, testConfig } from './helpers.ts';
 
 const noFork = { isFork: false, labels: [] };
@@ -56,4 +56,18 @@ test('CI state ignores our own check and waits for running ones', () => {
   assert.equal(ciState([{ name: 'test', status: 'in_progress', conclusion: null }], [], []).state, 'pending');
   assert.equal(ciState([{ name: 'score', status: 'in_progress', conclusion: null }], ['score'], []).state, 'green');
   assert.equal(ciState([done('lint', 'success')], [], ['test']).state, 'missing');
+});
+
+test('waitForCi polls a pending check until it finishes, or gives up', async () => {
+  const states: CiState[] = [{ state: 'pending', names: ['GitGuardian'] }, { state: 'pending', names: ['GitGuardian'] }, { state: 'green' }];
+  let reads = 0;
+  const noSleep = async () => undefined;
+  const done = await waitForCi(async () => states[Math.min(reads++, states.length - 1)] as CiState, 60_000, 20_000, noSleep);
+  assert.deepEqual(done, { state: 'green' });
+  assert.equal(reads, 3);
+
+  let slow = 0;
+  const stuck = await waitForCi(async () => (slow++, { state: 'pending', names: ['x'] }), 40_000, 20_000, noSleep);
+  assert.equal(stuck.state, 'pending');
+  assert.equal(slow, 3, 'one first read, then two polls in 40 seconds');
 });

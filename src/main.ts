@@ -2,7 +2,7 @@
 import { appendFile, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { resolveContext, type WorkflowRunEvent } from './context.ts';
-import { ciState } from './gates.ts';
+import { ciState, waitForCi } from './gates.ts';
 import { GitHub } from './github.ts';
 import { FakeHarness } from './harness/fake.ts';
 import { OpenCodeHarness } from './harness/opencode.ts';
@@ -46,7 +46,24 @@ async function run(config: Config): Promise<void> {
 
   // G1: every other check on the head commit must be green.
   const ownSuite = env.GITHUB_RUN_ID ? await gh.checkSuiteOfRun(env.GITHUB_RUN_ID) : undefined;
-  const ci = ciState(await gh.checksFor(headSha, ownSuite, [STATUS_CONTEXT]), [], config.requiredChecks);
+  const readCi = async () => ciState(await gh.checksFor(headSha, ownSuite, [STATUS_CONTEXT]), [], config.requiredChecks);
+  let ci = await readCi();
+  if (ci.state === 'pending') {
+    log(`Waiting up to ${config.ciWaitMinutes} minutes for: ${ci.names.join(', ')}`);
+    ci = await waitForCi(readCi, config.ciWaitMinutes * 60_000);
+  }
+  if (ci.state === 'pending') {
+    // Nothing will trigger us again for a GitHub App check, so say so instead of going quiet.
+    const names = ci.names.join(', ');
+    if (config.comment) {
+      await gh.upsertComment(
+        pr.number,
+        COMMENT_MARKER,
+        `${COMMENT_MARKER}\n### 🔴 AI Risk Scorer: a human must check this PR\n\nThese checks were still running after ${config.ciWaitMinutes} minutes: ${names}. The scorer only judges PRs whose CI is green, so it did not review this one. Re-run the AI Risk Scorer workflow once they finish.`,
+      );
+    }
+    return skip(`CI was still pending after ${config.ciWaitMinutes} minutes (${names})`);
+  }
   if (ci.state !== 'green') return skip(`CI is ${ci.state} on ${headSha.slice(0, 7)} (${ci.names.join(', ')})`);
 
   const repoDir = env.GITHUB_WORKSPACE ?? process.cwd();

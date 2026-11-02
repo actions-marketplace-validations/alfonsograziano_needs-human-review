@@ -75,6 +75,9 @@ inputs:
   required-checks:
     description: Check names that must exist and be green, one per line
     default: ''
+  ci-wait-minutes:
+    description: How long to wait for checks that are still running, such as GitHub App checks
+    default: '10'
   base-branches:
     description: Base branches to act on, one per line. Default is the repo's default branch.
     default: ''
@@ -161,6 +164,7 @@ runs:
         INPUT_SLICE_TIMEOUT_MINUTES: ${{ inputs.slice-timeout-minutes }}
         INPUT_TIMEOUT_MINUTES: ${{ inputs.timeout-minutes }}
         INPUT_REQUIRED_CHECKS: ${{ inputs.required-checks }}
+        INPUT_CI_WAIT_MINUTES: ${{ inputs.ci-wait-minutes }}
         INPUT_BASE_BRANCHES: ${{ inputs.base-branches }}
         INPUT_ALLOW_FORKS: ${{ inputs.allow-forks }}
         INPUT_SKIP_LABEL: ${{ inputs.skip-label }}

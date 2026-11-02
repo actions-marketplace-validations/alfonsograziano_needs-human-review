@@ -89,7 +89,7 @@ In `autonomous` mode the action merges with the exact commit it scored. If someo
 
 These run before any model is called, and no AI answer can override them.
 
-- **CI is green.** Every other check run and commit status on the head commit must have passed. If one is still running, the action exits and runs again when the next workflow finishes. `required-checks` lists checks that must exist, so a PR cannot look green just because CI never started.
+- **CI is green.** Every other check run and commit status on the head commit must have passed. If one is still running, the action waits for it, up to `ci-wait-minutes` (default 10). This matters for checks from GitHub Apps, such as security scanners: when they finish, they do not start a new `workflow_run`, so nothing would wake the scorer again. If a check is still running after the wait, the PR gets a comment saying a human must check it. `required-checks` lists checks that must exist, so a PR cannot look green just because CI never started.
 - **Forks.** PRs from forks always need a human, unless you set `allow-forks: true`.
 - **Skip label.** A PR with the `ai-risk-scorer:skip` label always needs a human.
 - **Self-protection.** A PR that touches `.github/workflows/**`, `.github/actions/**`, `CODEOWNERS`, the prompt files you configured, or anything in `self-protected-paths` always needs a human. This list is built in and cannot be shortened.
@@ -175,6 +175,7 @@ Either way, the fixed output contract in [`prompts/contract.md`](prompts/contrac
 | `slice-timeout-minutes` | `10` | Limit for one reviewer run |
 | `timeout-minutes` | `30` | Limit for the whole AI step |
 | `required-checks` | empty | Check names that must exist and be green |
+| `ci-wait-minutes` | `10` | How long to wait for checks still running, such as GitHub App checks |
 | `base-branches` | default branch | Base branches to act on |
 | `allow-forks` | `false` | Let fork PRs reach the AI step |
 | `skip-label` | `ai-risk-scorer:skip` | Label that always sends the PR to a human |
