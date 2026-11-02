@@ -1,6 +1,6 @@
 # AI Risk Scorer — Spec
 
-Status: draft v0.4, 2026-11-02. v0.2: short fixed user message, read-only review workspace, big PRs split into slices. v0.3: the reviewer must read every changed file in full and do an impact pass, checked from the tool-call log. v0.4: confidence is 1 to 5 stars with fixed meanings, not a percentage. Owner: Alfonso Graziano.
+Status: v1 built, 2026-11-02 (spec v0.5). v0.5: implementation notes in section 16. v0.2: short fixed user message, read-only review workspace, big PRs split into slices. v0.3: the reviewer must read every changed file in full and do an impact pass, checked from the tool-call log. v0.4: confidence is 1 to 5 stars with fixed meanings, not a percentage. Owner: Alfonso Graziano.
 
 ## 1. What it is
 
@@ -219,7 +219,7 @@ A PR can be too big for one context window. The action never cuts a diff and nev
 - A single file too big for one slice is split at hunk boundaries into several parts, each in its own slice. Each part keeps its function context. The reviewer of a part must read the file around its hunks (it can read a file in ranges), and the proof-of-reading check asks for those ranges instead of the whole file.
 - `slice-max-tokens` is well below the model's context window on purpose. The reviewer needs room to open callers and other files.
 
-**Step 4: review every slice.** One reviewer run per slice, up to `max-parallel` at a time (default 4). Each reviewer gets the same system prompt, the PR metadata, the full file list (so it sees the big picture), and its own slice. It must read every patch and every full file in its slice, do the impact pass, and answer with the verdict in section 5, including `files_reviewed` and `affected_code`.
+**Step 4: review every slice.** One reviewer run per slice, up to `max-parallel` at a time (default 4). The first "needs_human" stops new slices from starting (section 16). Each reviewer gets the same system prompt, the PR metadata, the full file list (so it sees the big picture), and its own slice. It must read every patch and every full file in its slice, do the impact pass, and answer with the verdict in section 5, including `files_reviewed` and `affected_code`.
 
 **Step 5: cross-check.** When there is more than one slice, one more run, the integrator, gets the PR metadata, the full file list and every slice verdict (summaries, reasons, risk areas). It looks for risk that only shows up across slices, for example a function signature that changes in slice 1 and a caller in slice 4 that was not updated. It can open any file in the repo. It answers with the same verdict.
 
@@ -323,7 +323,7 @@ interface HarnessInput {
   systemPrompt: string;   // parts 1 + 2 + 3 from section 4
   userMessage: string;    // part 4: short, fixed, no diff
   workdir: string;        // read-only repo at the head SHA, with the review folder inside
-  model: string;          // e.g. "anthropic/claude-sonnet-5-5"
+  model: string;          // e.g. "opencode-go/deepseek-v4.1-flash"
   timeoutMs: number;
 }
 
@@ -349,10 +349,12 @@ v1 ships `opencode`. `pi` and `claude-code` are planned (section 14). The `harne
 
 ### 6.2 OpenCode in v1
 
-- The action installs a pinned OpenCode version (`opencode-version` input) with `npm install -g opencode-ai@<version>`.
-- It writes a temporary OpenCode config with one custom agent, `risk-scorer`. The agent's prompt is the system prompt. Its permissions allow only read tools (`read`, `grep`, `glob`, `list`) and deny `edit`, `write`, `bash`, `webfetch` and every MCP server.
-- It runs `opencode run --agent risk-scorer --model <model> --format json` with the PR message, inside the checked-out repo.
-- The model's API key comes from the environment, through a GitHub secret the team sets (for example `ANTHROPIC_API_KEY`). The action never logs it.
+- The action installs a pinned OpenCode release (`opencode-version` input, default `2.2.5`) from github.com/anomalyco/opencode. OpenCode 2 is not on npm.
+- It passes the config inline (`OPENCODE_CONFIG_CONTENT`) with one custom agent, `risk-scorer`. The agent's `system` is the system prompt. Its `permissions` start with a deny-all rule, then allow only `read`, `grep` and `glob` back (later rules win). `policies` deny MCP servers, skills, plugins and integrations. OpenCode then does not even offer the other tools to the model.
+- It sets `OPENCODE_DISABLE_PROJECT_CONFIG=1`, so an `opencode.json` or `.opencode/` folder in the PR cannot change the agent, and sets `PWD` to the workdir, because OpenCode takes its project root from `PWD`.
+- It runs `opencode run --standalone --agent risk-scorer --model <model> --format json` with the PR message, inside the checked-out repo.
+- The reads for the proof-of-reading check come from completed `read` tool calls in the JSON event stream. The line range is taken from the tool's own output ("Read file x, lines 1-2000"), not from what the model asked for.
+- The key comes from the `OPENCODE_API_KEY` secret. An OpenCode Go key serves models under the `opencode-go` provider, so the default model is `opencode-go/deepseek-v4.1-flash`. The action never logs the key.
 - Each run has a hard timeout (`slice-timeout-minutes`, default 10) that kills the process. The whole AI step also has a limit (`timeout-minutes`, default 30). A timeout means needs a human.
 
 ## 7. Modes: the trust ladder
@@ -491,8 +493,8 @@ The action job itself only fails on bad config or when it cannot reach GitHub at
 |---|---|---|
 | `mode` | `shadow` | `shadow`, `advisory` or `autonomous` |
 | `harness` | `opencode` | Which coding agent runs the scorer |
-| `model` | `anthropic/claude-sonnet-5-5` | Model, in the harness's format |
-| `opencode-version` | pinned in the action | OpenCode version to install |
+| `model` | `opencode-go/deepseek-v4.1-flash` | Model, in the harness's format |
+| `opencode-version` | `2.2.5` | OpenCode release to install |
 | `github-token` | `${{ github.token }}` | Token for comments, labels, status and merge |
 | `protected-paths` | empty | Globs that always need a human, one per line |
 | `self-protected-paths` | empty | Extra paths added to the always-on list in G4 |
@@ -645,8 +647,18 @@ The gates, the slicer, the verdict parser, the aggregation and the decision are 
 
 1. **Can a team change the output contract?** The spec says no, so the parser always works, even with a full custom prompt. Is that the right line for "full control"?
 2. **`max-risk-to-merge: medium`.** The spec allows it. Should we cap it at `low` in v1, to keep the first version strict?
-3. **Model default.** `anthropic/claude-sonnet-5-5` is a guess for good judgment at a fair price. Do you want a cheaper default, or no default at all (the team must choose)?
+3. ~~**Model default.**~~ Decided: `opencode-go/deepseek-v4.1-flash`, cheap enough to run on every PR (about $0.003 per small PR in the sandbox eval).
 4. **Action name on GitHub.** `alfonsograziano/ai-risk-scorer` is assumed. Or should it live under an AINE name, next to the AINE Score action?
+
+## 16. Changes made while building v1
+
+These came out of building and testing, and the sections above already reflect them:
+
+- **Stop early.** The orchestrator stops starting new slices as soon as one slice says `needs_human` or fails, and then skips the integrator. The answer can no longer be "safe", so the rest would only cost money.
+- **Only generated files.** A PR that changes only generated files (for example a lock file bump) has nothing for the AI to read, so it needs a human.
+- **Fake review folders.** `.ai-risk-scorer-*/**` is on the self-protected list. A PR that ships a folder shaped like the review folder is trying to fool the reviewer. The workspace also refuses it, as a second lock.
+- **Labels need `issues: write`.** PR labels are issue labels, so the example workflow asks for it.
+- **Unexpected errors fail the job.** If something breaks that the action did not plan for, nothing is merged and the job fails, so the team sees it.
 
 ## Appendix A. Default system prompt (draft)
 
