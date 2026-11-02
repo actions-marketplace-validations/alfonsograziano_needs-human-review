@@ -1,0 +1,7 @@
+.env
+.env.*
+node_modules/
+.ai-risk-scorer-*/
+*.log
+.DS_Store
+eval/runs/
