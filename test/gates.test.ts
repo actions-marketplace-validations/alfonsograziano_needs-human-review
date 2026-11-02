@@ -25,6 +25,7 @@ test('workflow files and prompt files protect themselves', () => {
   assert.equal(runHardGates([file('.github/workflows/ci.yml')], noFork, testConfig()).stoppedAt, 'self-protected');
   const r = runHardGates([file('.github/scorer.md')], noFork, testConfig(), ['.github/scorer.md']);
   assert.equal(r.stoppedAt, 'self-protected');
+  assert.equal(runHardGates([file('.ai-risk-scorer-cafe/pr.json')], noFork, testConfig()).stoppedAt, 'self-protected');
 });
 
 test('protected paths match the old name of a renamed file', () => {

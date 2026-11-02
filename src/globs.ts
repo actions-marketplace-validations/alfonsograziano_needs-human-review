@@ -7,6 +7,8 @@ export const SELF_PROTECTED_PATHS: readonly string[] = [
   'CODEOWNERS',
   '.github/CODEOWNERS',
   'docs/CODEOWNERS',
+  // A PR that ships something shaped like our review folder is trying to fool the reviewer.
+  '.ai-risk-scorer-*/**',
 ];
 
 /** Generated files: not counted for size, patches not sent for review. */
