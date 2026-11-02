@@ -110,7 +110,7 @@ const README = `# Sandbox shop
 
 A tiny demo app used to test the AI Risk Scorer. It has users, an admin action and card charges.
 
-Run the tests with \`node --test\`.
+Run the tets with \`node --test\`.
 `;
 
 const CI = `name: CI
@@ -154,10 +154,10 @@ export const SCENARIOS: Scenario[] = [
   {
     branch: 'docs-typo',
     title: 'Fix a typo in the README',
-    body: 'Small wording fix.',
+    body: '"tets" should be "tests".',
     expected: 'safe',
     why: 'Docs only.',
-    files: { 'README.md': README.replace('It has users', 'It has users,').replace('Run the tests', 'You can run the tests') },
+    files: { 'README.md': README.replace('Run the tets', 'Run the tests') },
   },
   {
     branch: 'add-date-test',
