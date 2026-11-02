@@ -84,6 +84,17 @@ export function parsePatch(patch: string): { header: string; hunks: { text: stri
   return { header, hunks };
 }
 
+/** Every file the PR changes, between the merge base and the head. */
+export async function listChanges(repoDir: string, baseSha: string, headSha: string): Promise<{ mergeBase: string; files: ChangedFile[] }> {
+  const mergeBase = (await git(repoDir, ['merge-base', baseSha, headSha])).trim();
+  const range = [mergeBase, headSha];
+  const files = parseChanges(
+    await git(repoDir, ['diff', '-z', '--name-status', '-M', ...range]),
+    await git(repoDir, ['diff', '-z', '--numstat', '-M', ...range]),
+  );
+  return { mergeBase, files };
+}
+
 export interface Workspace {
   repoDir: string;
   /** Review folder name, relative to repoDir. */
@@ -119,13 +130,8 @@ export async function prepareWorkspace(opts: PrepareOptions): Promise<Workspace>
   const { repoDir, baseSha, headSha, config } = opts;
   const actualHead = (await git(repoDir, ['rev-parse', 'HEAD'])).trim();
   if (actualHead !== headSha) throw new Error(`checkout is at ${actualHead}, expected the PR head ${headSha}`);
-  const mergeBase = (await git(repoDir, ['merge-base', baseSha, headSha])).trim();
-
+  const { mergeBase, files } = await listChanges(repoDir, baseSha, headSha);
   const range = [mergeBase, headSha];
-  const files = parseChanges(
-    await git(repoDir, ['diff', '-z', '--name-status', '-M', ...range]),
-    await git(repoDir, ['diff', '-z', '--numstat', '-M', ...range]),
-  );
   // The self-protection gate already stops these. This is the second lock.
   const planted = files.filter((f) => f.path.startsWith(PREFIX) || f.previousPath?.startsWith(PREFIX));
   if (planted.length > 0) throw new Error(`the PR contains files shaped like a review folder: ${planted.map((f) => f.path).join(', ')}`);

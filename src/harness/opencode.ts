@@ -132,6 +132,8 @@ export class OpenCodeHarness implements Harness {
     const started = Date.now();
     const env = {
       ...process.env,
+      // OpenCode takes its project root from PWD, not from the process cwd.
+      PWD: input.workdir,
       OPENCODE_CONFIG_CONTENT: JSON.stringify(opencodeConfig(input.systemPrompt)),
       // The repo is untrusted. Its own opencode.json, .opencode/ agents and plugins must not load.
       OPENCODE_DISABLE_PROJECT_CONFIG: '1',
