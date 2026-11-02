@@ -218,6 +218,10 @@ None of this makes the AI step safe on its own. It lowers risk; the hard rules a
 | Touches `src/payments/**` | needs a human | needs a human | protected path | $0 |
 | Edits a workflow file | needs a human | needs a human | self-protection | $0 |
 
+### On GitHub
+
+The same seven scenarios run as real PRs on a private demo repo, in autonomous mode with OpenCode 2.2.5. The PR lookup, the CI wait, both hard gates, the sticky comment, the labels and the status all work there. The two hard-gate PRs were stopped before any AI call. The five AI PRs got "a human must check" comments because the API key could not reach the model, which is the fail-safe doing its job. The AI step in CI still needs a rerun with a working Go key.
+
 Seven scenarios is a smoke test, not a benchmark. It shows the pipeline works end to end and catches the traps it was built for. It says nothing about how often the model is wrong on real PRs. Shadow mode on a real repo is how you find that out.
 
 ## Run it locally
