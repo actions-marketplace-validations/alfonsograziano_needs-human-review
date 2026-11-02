@@ -1,0 +1,176 @@
+name: AI Risk Scorer
+description: Decides if a pull request can merge on its own, or if a human has to check it. Hard rules first, AI second.
+author: Alfonso Graziano
+branding:
+  icon: shield
+  color: green
+
+inputs:
+  mode:
+    description: shadow (comment only), advisory (labels and a status), or autonomous (merges safe PRs)
+    default: shadow
+  harness:
+    description: Coding agent that runs the review. Only opencode in v1.
+    default: opencode
+  model:
+    description: Model in OpenCode format, provider/model
+    default: opencode/deepseek-v4.1-flash
+  opencode-version:
+    description: OpenCode release to install from github.com/anomalyco/opencode
+    default: 2.2.5
+  github-token:
+    description: Token for comments, labels, the status and the merge
+    default: ${{ github.token }}
+  protected-paths:
+    description: Globs that always need a human, one per line
+    default: ''
+  self-protected-paths:
+    description: Extra paths added to the always-on self-protected list, one per line
+    default: ''
+  max-lines-changed:
+    description: Size limit in changed lines. 0 is off.
+    default: '0'
+  max-files-changed:
+    description: Size limit in changed files. 0 is off.
+    default: '0'
+  generated-paths:
+    description: Extra globs for generated files (not counted for size, patches not reviewed), one per line
+    default: ''
+  generated-defaults:
+    description: Use the built-in generated-files list (lock files, minified files, snapshots, dist)
+    default: 'true'
+  system-prompt:
+    description: Replaces the default prompt completely (inline text)
+    default: ''
+  system-prompt-file:
+    description: Replaces the default prompt completely (file in the repo, read from the base branch)
+    default: ''
+  custom-instructions:
+    description: Added after the system prompt (inline text)
+    default: ''
+  custom-instructions-file:
+    description: Added after the system prompt (file in the repo, read from the base branch)
+    default: ''
+  max-risk-to-merge:
+    description: Highest risk that may merge, low or medium
+    default: low
+  min-confidence:
+    description: Fewest stars (1 to 5) that may merge
+    default: '4'
+  slice-max-tokens:
+    description: Patch plus file size per slice, in estimated tokens
+    default: '40000'
+  max-slices:
+    description: Cost cap. More slices means a human must check. 0 is no limit.
+    default: '25'
+  max-parallel:
+    description: Slice reviews run at the same time
+    default: '4'
+  slice-timeout-minutes:
+    description: Hard limit for one reviewer run
+    default: '10'
+  timeout-minutes:
+    description: Hard limit for the whole AI step
+    default: '30'
+  required-checks:
+    description: Check names that must exist and be green, one per line
+    default: ''
+  base-branches:
+    description: Base branches to act on, one per line. Default is the repo's default branch.
+    default: ''
+  allow-forks:
+    description: Let fork PRs reach the AI step
+    default: 'false'
+  skip-label:
+    description: Label that always sends the PR to a human
+    default: ai-risk-scorer:skip
+  merge-method:
+    description: squash, merge or rebase
+    default: squash
+  comment:
+    description: Post the sticky PR comment
+    default: 'true'
+
+outputs:
+  decision:
+    description: merged, safe, needs_human or skipped
+    value: ${{ steps.score.outputs.decision }}
+  risk:
+    description: low, medium or high, empty when unknown
+    value: ${{ steps.score.outputs.risk }}
+  confidence:
+    description: 1 to 5 stars, empty when unknown
+    value: ${{ steps.score.outputs.confidence }}
+  stopped-at:
+    description: The gate that stopped the run, ai, error or skipped
+    value: ${{ steps.score.outputs.stopped-at }}
+  verdict-json:
+    description: The combined verdict as JSON
+    value: ${{ steps.score.outputs.verdict-json }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Node 24
+      uses: actions/setup-node@v5
+      with:
+        node-version: 24
+
+    - name: Install OpenCode
+      if: inputs.harness == 'opencode'
+      shell: bash
+      env:
+        OPENCODE_VERSION: ${{ inputs.opencode-version }}
+      run: |
+        set -euo pipefail
+        case "$(uname -m)" in
+          x86_64) arch=x64 ;;
+          aarch64|arm64) arch=arm64 ;;
+          *) echo "unsupported CPU $(uname -m)"; exit 1 ;;
+        esac
+        dir="$RUNNER_TEMP/opencode"
+        mkdir -p "$dir"
+        curl -fsSL "https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/opencode-linux-${arch}.tar.gz" | tar -xz -C "$dir"
+        echo "$dir" >> "$GITHUB_PATH"
+        "$dir/opencode" --version
+
+    - name: Score the pull request
+      id: score
+      shell: bash
+      run: node "$GITHUB_ACTION_PATH/src/main.ts"
+      env:
+        INPUT_MODE: ${{ inputs.mode }}
+        INPUT_HARNESS: ${{ inputs.harness }}
+        INPUT_MODEL: ${{ inputs.model }}
+        INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}
+        INPUT_PROTECTED_PATHS: ${{ inputs.protected-paths }}
+        INPUT_SELF_PROTECTED_PATHS: ${{ inputs.self-protected-paths }}
+        INPUT_MAX_LINES_CHANGED: ${{ inputs.max-lines-changed }}
+        INPUT_MAX_FILES_CHANGED: ${{ inputs.max-files-changed }}
+        INPUT_GENERATED_PATHS: ${{ inputs.generated-paths }}
+        INPUT_GENERATED_DEFAULTS: ${{ inputs.generated-defaults }}
+        INPUT_SYSTEM_PROMPT: ${{ inputs.system-prompt }}
+        INPUT_SYSTEM_PROMPT_FILE: ${{ inputs.system-prompt-file }}
+        INPUT_CUSTOM_INSTRUCTIONS: ${{ inputs.custom-instructions }}
+        INPUT_CUSTOM_INSTRUCTIONS_FILE: ${{ inputs.custom-instructions-file }}
+        INPUT_MAX_RISK_TO_MERGE: ${{ inputs.max-risk-to-merge }}
+        INPUT_MIN_CONFIDENCE: ${{ inputs.min-confidence }}
+        INPUT_SLICE_MAX_TOKENS: ${{ inputs.slice-max-tokens }}
+        INPUT_MAX_SLICES: ${{ inputs.max-slices }}
+        INPUT_MAX_PARALLEL: ${{ inputs.max-parallel }}
+        INPUT_SLICE_TIMEOUT_MINUTES: ${{ inputs.slice-timeout-minutes }}
+        INPUT_TIMEOUT_MINUTES: ${{ inputs.timeout-minutes }}
+        INPUT_REQUIRED_CHECKS: ${{ inputs.required-checks }}
+        INPUT_BASE_BRANCHES: ${{ inputs.base-branches }}
+        INPUT_ALLOW_FORKS: ${{ inputs.allow-forks }}
+        INPUT_SKIP_LABEL: ${{ inputs.skip-label }}
+        INPUT_MERGE_METHOD: ${{ inputs.merge-method }}
+        INPUT_COMMENT: ${{ inputs.comment }}
+
+    - name: Keep the verdict record
+      if: always() && steps.score.outputs.record-path != ''
+      uses: actions/upload-artifact@v4
+      with:
+        name: ai-risk-scorer-verdict-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ steps.score.outputs.record-path }}
+        if-no-files-found: ignore

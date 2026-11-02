@@ -1,0 +1,124 @@
+// Entry point for GitHub Actions. Run by action.yml as `node src/main.ts`.
+import { appendFile, readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { resolveContext, type WorkflowRunEvent } from './context.ts';
+import { ciState } from './gates.ts';
+import { GitHub } from './github.ts';
+import { FakeHarness } from './harness/fake.ts';
+import { OpenCodeHarness } from './harness/opencode.ts';
+import { ConfigError, readConfig, type Config } from './inputs.ts';
+import { COMMENT_MARKER, renderReport, verdictRecord, type Action, type ReportInput } from './report.ts';
+import { scorePullRequest } from './score.ts';
+import { git } from './workspace.ts';
+
+export const STATUS_CONTEXT = 'ai-risk-scorer';
+export const LABEL_SAFE = 'ai-risk:safe';
+export const LABEL_HUMAN = 'ai-risk:needs-human';
+
+const env = process.env;
+const log = (line: string) => console.log(line);
+
+async function setOutputs(values: Record<string, string>): Promise<void> {
+  if (!env.GITHUB_OUTPUT) return;
+  const lines = Object.entries(values).map(([k, v]) => `${k}<<__ARS__\n${v}\n__ARS__\n`);
+  await appendFile(env.GITHUB_OUTPUT, lines.join(''));
+}
+
+async function summary(markdown: string): Promise<void> {
+  if (env.GITHUB_STEP_SUMMARY) await appendFile(env.GITHUB_STEP_SUMMARY, `${markdown}\n`);
+}
+
+async function skip(reason: string): Promise<void> {
+  log(`Nothing to do: ${reason}.`);
+  await summary(`AI Risk Scorer: nothing to do, ${reason}.`);
+  await setOutputs({ decision: 'skipped', 'stopped-at': 'skipped', risk: '', confidence: '', 'verdict-json': '', 'record-path': '' });
+}
+
+async function run(config: Config): Promise<void> {
+  const repo = env.GITHUB_REPOSITORY ?? '';
+  const gh = new GitHub(config.githubToken || env.GITHUB_TOKEN || '', repo, env.GITHUB_API_URL);
+  const event = JSON.parse(await readFile(env.GITHUB_EVENT_PATH ?? '', 'utf8')) as WorkflowRunEvent;
+
+  const ctx = await resolveContext(gh, env.GITHUB_EVENT_NAME ?? '', event, config.baseBranches);
+  if ('skip' in ctx) return skip(ctx.skip);
+  const { pr, meta, facts, baseSha, headSha } = ctx;
+  log(`PR #${pr.number}: ${pr.title} (head ${headSha.slice(0, 7)})`);
+
+  // G1: every other check on the head commit must be green.
+  const ownSuite = env.GITHUB_RUN_ID ? await gh.checkSuiteOfRun(env.GITHUB_RUN_ID) : undefined;
+  const ci = ciState(await gh.checksFor(headSha, ownSuite, [STATUS_CONTEXT]), [], config.requiredChecks);
+  if (ci.state !== 'green') return skip(`CI is ${ci.state} on ${headSha.slice(0, 7)} (${ci.names.join(', ')})`);
+
+  const repoDir = env.GITHUB_WORKSPACE ?? process.cwd();
+  const harness = config.harness === 'fake' ? new FakeHarness(() => ({ error: 'fake harness: no model' })) : new OpenCodeHarness();
+  const result = await scorePullRequest({
+    repoDir,
+    baseSha,
+    headSha,
+    pr: meta,
+    facts,
+    config,
+    harness,
+    readBaseFile: async (path) => git(repoDir, ['show', `${baseSha}:${path}`]),
+    lock: true,
+    log,
+  });
+
+  // Act by mode. Shadow only writes things down.
+  let action: Action = 'none';
+  let mergeError: string | undefined;
+  if (config.mode !== 'shadow') {
+    await gh.setLabel(pr.number, result.mergeAllowed ? LABEL_SAFE : LABEL_HUMAN, [result.mergeAllowed ? LABEL_HUMAN : LABEL_SAFE]);
+    await gh.setStatus(headSha, result.mergeAllowed ? 'success' : 'failure', STATUS_CONTEXT, result.mergeAllowed ? `Safe to merge (risk ${result.aggregate.risk})` : 'A human must check this PR');
+    action = 'labelled';
+  }
+  if (config.mode === 'autonomous' && result.mergeAllowed) {
+    try {
+      await gh.merge(pr.number, headSha, config.mergeMethod, pr.title);
+      action = 'merged';
+    } catch (e) {
+      action = 'merge-blocked';
+      mergeError = (e as Error).message.replace(/^PUT \S+: /, '');
+    }
+  }
+
+  const report: ReportInput = { result, mode: config.mode, action, headSha, model: config.model, ...(mergeError ? { mergeError } : {}) };
+  const markdown = renderReport(report);
+  if (config.comment) await gh.upsertComment(pr.number, COMMENT_MARKER, markdown);
+  await summary(markdown);
+
+  const recordPath = join(env.RUNNER_TEMP ?? repoDir, 'ai-risk-scorer-verdict.json');
+  await writeFile(recordPath, JSON.stringify(verdictRecord(report, config, { number: pr.number, title: pr.title }), null, 2));
+  await setOutputs({
+    decision: action === 'merged' ? 'merged' : result.mergeAllowed ? 'safe' : 'needs_human',
+    risk: result.aggregate.risk ?? '',
+    confidence: result.aggregate.confidence === null ? '' : String(result.aggregate.confidence),
+    'stopped-at': result.stoppedAt,
+    'verdict-json': JSON.stringify(result.aggregate),
+    'record-path': recordPath,
+  });
+  log(`Done: ${action === 'merged' ? 'merged' : result.mergeAllowed ? 'safe' : 'needs a human'} (stopped at ${result.stoppedAt}).`);
+}
+
+async function main(): Promise<void> {
+  let config: Config;
+  try {
+    config = readConfig(env);
+  } catch (e) {
+    const message = e instanceof ConfigError ? e.message : String(e);
+    console.error(message);
+    await summary(`### 🔴 AI Risk Scorer: bad config\n\n${message}`);
+    process.exitCode = 1;
+    return;
+  }
+  try {
+    await run(config);
+  } catch (e) {
+    // Never merge on an error. The job fails so the team sees it; no merge has happened.
+    console.error(`AI Risk Scorer failed, so a human must check this PR: ${(e as Error).stack ?? e}`);
+    await summary(`### 🔴 AI Risk Scorer failed\n\nA human must check this PR.\n\n\`\`\`\n${(e as Error).message}\n\`\`\``);
+    process.exitCode = 1;
+  }
+}
+
+await main();

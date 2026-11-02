@@ -124,7 +124,7 @@ export class OpenCodeHarness implements Harness {
   readonly name = 'opencode';
   readonly #bin: string;
 
-  constructor(bin = 'opencode') {
+  constructor(bin = process.env.OPENCODE_BIN || 'opencode') {
     this.#bin = bin;
   }
 

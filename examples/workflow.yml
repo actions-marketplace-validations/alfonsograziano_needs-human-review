@@ -1,0 +1,44 @@
+# .github/workflows/ai-risk-scorer.yml
+#
+# Runs after your CI workflow finishes. GitHub runs this file from the
+# default branch, never from the PR, so a PR cannot change the rules it is
+# judged by.
+name: AI Risk Scorer
+on:
+  workflow_run:
+    workflows: [CI] # the name of every workflow that must be green
+    types: [completed]
+
+permissions:
+  contents: write # merge (autonomous mode only; read is enough for shadow)
+  pull-requests: write # comment, labels
+  issues: write # labels are issue labels
+  statuses: write # the ai-risk-scorer status (advisory, autonomous)
+  checks: read # is CI green?
+  actions: read # read the workflow run
+
+concurrency:
+  group: ai-risk-scorer-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
+jobs:
+  score:
+    if: github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: alfonsograziano/ai-risk-scorer@main
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+        with:
+          mode: shadow
+          protected-paths: |
+            src/payments/**
+            **/migrations/**
+            *.tf
+          max-lines-changed: 400
