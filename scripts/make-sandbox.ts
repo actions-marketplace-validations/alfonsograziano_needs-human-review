@@ -244,13 +244,56 @@ export async function makeSandbox(dir: string, extraBaseFiles: Record<string, st
   await git(dir, ['checkout', '-q', 'main']);
 }
 
+/** The scorer workflow for the GitHub demo repo. */
+export function scorerWorkflow(mode: string, ref: string): string {
+  return `name: AI Risk Scorer
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  statuses: write
+  checks: read
+  actions: read
+
+concurrency:
+  group: ai-risk-scorer-\${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
+jobs:
+  score:
+    if: github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: \${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: alfonsograziano/ai-risk-scorer@${ref}
+        env:
+          OPENCODE_API_KEY: \${{ secrets.OPENCODE_API_KEY }}
+        with:
+          mode: ${mode}
+          model: opencode/deepseek-v4.1-flash
+          protected-paths: |
+            src/payments/**
+`;
+}
+
 if (import.meta.main) {
-  const { values } = parseArgs({ options: { out: { type: 'string' } } });
+  const { values } = parseArgs({ options: { out: { type: 'string' }, 'scorer-mode': { type: 'string' }, 'scorer-ref': { type: 'string', default: 'main' } } });
   if (!values.out) {
-    console.error('Usage: node scripts/make-sandbox.ts --out <dir>');
+    console.error('Usage: node scripts/make-sandbox.ts --out <dir> [--scorer-mode shadow|advisory|autonomous] [--scorer-ref main]');
     process.exit(1);
   }
   const out = resolve(values.out);
-  await makeSandbox(out);
+  const mode = values['scorer-mode'];
+  await makeSandbox(out, mode ? { '.github/workflows/ai-risk-scorer.yml': scorerWorkflow(mode, values['scorer-ref']) } : {});
   console.log(`Sandbox ready at ${out} with ${SCENARIOS.length} branches: ${SCENARIOS.map((s) => s.branch).join(', ')}`);
 }
