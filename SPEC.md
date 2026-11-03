@@ -660,6 +660,8 @@ These came out of building and testing, and the sections above already reflect t
 - **Labels need `issues: write`.** PR labels are issue labels, so the example workflow asks for it.
 - **Wait for GitHub App checks.** On the demo repo, a GitGuardian check was still running when the scorer looked. App checks do not start a `workflow_run` when they finish, so the scorer would never run again. The action now waits up to `ci-wait-minutes` (default 10) for pending checks, and if they are still pending, comments that a human must check.
 - **Unexpected errors fail the job.** If something breaks that the action did not plan for, nothing is merged and the job fails, so the team sees it.
+- **The model provider is an integration.** On OpenCode 2.2.5 the deny-all `integration.use` policy also blocked the model provider, so every review failed with "Model unavailable". OpenCode 2.0.20 did not, which is why it only showed up in CI. The policy still denies every integration, then allows back only the provider in `model` (for `opencode/deepseek-v4.1-flash`, that is `opencode`).
+- **Zen, not Go, by default.** OpenCode Go models need a Go subscription on the key's workspace and are meant for OpenCode's own apps. Zen works with any OpenCode API key, so the default model is `opencode/deepseek-v4.1-flash`.
 
 ## Appendix A. Default system prompt (draft)
 

@@ -43,10 +43,19 @@ test('absolute read paths become relative to the workdir', () => {
 });
 
 test('only read, grep and glob are allowed, after a deny-all rule', () => {
-  const cfg = opencodeConfig('SYSTEM') as { agents: Record<string, { system: string; permissions: { action: string; effect: string }[] }> };
+  const cfg = opencodeConfig('SYSTEM', 'opencode/deepseek-v4.1-flash') as { agents: Record<string, { system: string; permissions: { action: string; effect: string }[] }> };
   const agent = cfg.agents['risk-scorer'];
   assert.equal(agent?.system, 'SYSTEM');
   assert.deepEqual(agent?.permissions[0], { action: '*', resource: '*', effect: 'deny' });
   const allowed = agent?.permissions.filter((p) => p.effect === 'allow').map((p) => p.action);
   assert.deepEqual(allowed, ['read', 'grep', 'glob']);
+});
+
+test('integrations are denied, except the provider of the model', () => {
+  const cfg = opencodeConfig('SYSTEM', 'opencode/deepseek-v4.1-flash') as { policies: { action: string; resource: string; effect: string }[] };
+  const integration = cfg.policies.filter((p) => p.action === 'integration.use');
+  assert.deepEqual(integration, [
+    { action: 'integration.use', resource: '*', effect: 'deny' },
+    { action: 'integration.use', resource: 'opencode', effect: 'allow' },
+  ]);
 });

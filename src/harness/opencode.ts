@@ -9,9 +9,11 @@ export const AGENT_NAME = 'risk-scorer';
 /**
  * OpenCode config for one read-only reviewer. Every tool is denied, then only
  * read, grep and glob are allowed back (later rules win). MCP servers, skills,
- * plugins and integrations are denied by policy.
+ * plugins and integrations are denied by policy. OpenCode 2.2 treats the model
+ * provider as an integration too, so the provider of `model` is allowed back.
  */
-export function opencodeConfig(systemPrompt: string): Record<string, unknown> {
+export function opencodeConfig(systemPrompt: string, model: string): Record<string, unknown> {
+  const provider = model.split('/')[0] ?? '';
   return {
     agents: {
       [AGENT_NAME]: {
@@ -32,6 +34,7 @@ export function opencodeConfig(systemPrompt: string): Record<string, unknown> {
       { action: 'skill.use', resource: '*', effect: 'deny' },
       { action: 'plugin.use', resource: '*', effect: 'deny' },
       { action: 'integration.use', resource: '*', effect: 'deny' },
+      { action: 'integration.use', resource: provider, effect: 'allow' },
     ],
   };
 }
@@ -134,7 +137,7 @@ export class OpenCodeHarness implements Harness {
       ...process.env,
       // OpenCode takes its project root from PWD, not from the process cwd.
       PWD: input.workdir,
-      OPENCODE_CONFIG_CONTENT: JSON.stringify(opencodeConfig(input.systemPrompt)),
+      OPENCODE_CONFIG_CONTENT: JSON.stringify(opencodeConfig(input.systemPrompt, input.model)),
       // The repo is untrusted. Its own opencode.json, .opencode/ agents and plugins must not load.
       OPENCODE_DISABLE_PROJECT_CONFIG: '1',
       OPENCODE_DISABLE_AUTOUPDATE: '1',
