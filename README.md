@@ -255,4 +255,4 @@ npm run check
 
 - Only the OpenCode harness. Pi and Claude Code are planned.
 - No override log yet. Every run leaves a JSON record, which is the raw material for it.
-- The repo's `AGENTS.md`, if it has one, may still reach the model as context. It is repo content, so the prompt treats it as untrusted.
+- The reviewer agent sets its own system prompt and turns off project config, and a local test on OpenCode 2.0.20 showed that a planted `AGENTS.md` or `CLAUDE.md` does not reach the model. That was one test on one version, so the prompt still treats every repo file as untrusted.

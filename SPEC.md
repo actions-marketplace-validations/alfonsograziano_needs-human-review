@@ -323,7 +323,7 @@ interface HarnessInput {
   systemPrompt: string;   // parts 1 + 2 + 3 from section 4
   userMessage: string;    // part 4: short, fixed, no diff
   workdir: string;        // read-only repo at the head SHA, with the review folder inside
-  model: string;          // e.g. "opencode-go/deepseek-v4.1-flash"
+  model: string;          // e.g. "opencode/deepseek-v4.1-flash"
   timeoutMs: number;
 }
 
@@ -354,7 +354,7 @@ v1 ships `opencode`. `pi` and `claude-code` are planned (section 14). The `harne
 - It sets `OPENCODE_DISABLE_PROJECT_CONFIG=1`, so an `opencode.json` or `.opencode/` folder in the PR cannot change the agent, and sets `PWD` to the workdir, because OpenCode takes its project root from `PWD`.
 - It runs `opencode run --standalone --agent risk-scorer --model <model> --format json` with the PR message, inside the checked-out repo.
 - The reads for the proof-of-reading check come from completed `read` tool calls in the JSON event stream. The line range is taken from the tool's own output ("Read file x, lines 1-2000"), not from what the model asked for.
-- The key comes from the `OPENCODE_API_KEY` secret. An OpenCode Go key serves models under the `opencode-go` provider, so the default model is `opencode-go/deepseek-v4.1-flash`. The action never logs the key.
+- The key comes from the `OPENCODE_API_KEY` secret. The default model is `opencode/deepseek-v4.1-flash` on OpenCode Zen, which bills the key's workspace per use. Zen works with a plain API key in CI. OpenCode Go models (`opencode-go/...`) need a Go subscription on the key's workspace and are meant for OpenCode's own apps, so they are not the default. The action never logs the key.
 - Each run has a hard timeout (`slice-timeout-minutes`, default 10) that kills the process. The whole AI step also has a limit (`timeout-minutes`, default 30). A timeout means needs a human.
 
 ## 7. Modes: the trust ladder
@@ -493,7 +493,7 @@ The action job itself only fails on bad config or when it cannot reach GitHub at
 |---|---|---|
 | `mode` | `shadow` | `shadow`, `advisory` or `autonomous` |
 | `harness` | `opencode` | Which coding agent runs the scorer |
-| `model` | `opencode-go/deepseek-v4.1-flash` | Model, in the harness's format |
+| `model` | `opencode/deepseek-v4.1-flash` | Model, in the harness's format |
 | `opencode-version` | `2.2.5` | OpenCode release to install |
 | `github-token` | `${{ github.token }}` | Token for comments, labels, status and merge |
 | `protected-paths` | empty | Globs that always need a human, one per line |
@@ -647,7 +647,7 @@ The gates, the slicer, the verdict parser, the aggregation and the decision are 
 
 1. **Can a team change the output contract?** The spec says no, so the parser always works, even with a full custom prompt. Is that the right line for "full control"?
 2. **`max-risk-to-merge: medium`.** The spec allows it. Should we cap it at `low` in v1, to keep the first version strict?
-3. ~~**Model default.**~~ Decided: `opencode-go/deepseek-v4.1-flash`, cheap enough to run on every PR (about $0.003 per small PR in the sandbox eval).
+3. ~~**Model default.**~~ Decided: `opencode/deepseek-v4.1-flash`, cheap enough to run on every PR (about $0.003 per small PR in the sandbox eval).
 4. **Action name on GitHub.** `alfonsograziano/ai-risk-scorer` is assumed. Or should it live under an AINE name, next to the AINE Score action?
 
 ## 16. Changes made while building v1

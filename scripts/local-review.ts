@@ -43,8 +43,8 @@ if (values.help) {
   process.exit(0);
 }
 
-// Locally OpenCode uses your console login, which serves Go models under the
-// `opencode` provider. In CI an OPENCODE_API_KEY Go key uses `opencode-go`.
+// The default is the Zen model, the same one CI uses. Locally OpenCode takes
+// it from your console login, or from OPENCODE_API_KEY if that is set.
 const env: Record<string, string> = { INPUT_MODE: values.mode, INPUT_MODEL: values.model ?? 'opencode/deepseek-v4.1-flash' };
 if (values.protected.length > 0) env.INPUT_PROTECTED_PATHS = values.protected.join('\n');
 if (values['max-lines']) env.INPUT_MAX_LINES_CHANGED = values['max-lines'];
