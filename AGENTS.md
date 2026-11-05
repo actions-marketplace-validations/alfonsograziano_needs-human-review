@@ -25,4 +25,5 @@ npm run local -- --help   # run the full review locally against a git repo
 - `src/harness/` adapters for coding agents. `opencode.ts` is the real one, `fake.ts` is for tests.
 - `prompts/` the default system prompt and the fixed output contract.
 - `test/` `node:test` tests, one file per module.
-- `scripts/` local tools: the local runner and the sandbox builder.
+- `scripts/` local tools: the local runner, the sandbox builder and the README diagram renderer.
+- `docs/` the README diagram: `diagram/how-it-works.html` is the source, the PNGs are rendered from it.
