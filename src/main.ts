@@ -1,7 +1,7 @@
 // Entry point for GitHub Actions. Run by action.yml as `node src/main.ts`.
 import { appendFile, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { resolveContext, type WorkflowRunEvent } from './context.ts';
+import { changesSinceScored, resolveContext, type WorkflowRunEvent } from './context.ts';
 import { ciState, waitForCi } from './gates.ts';
 import { GitHub } from './github.ts';
 import { FakeHarness } from './harness/fake.ts';
@@ -9,7 +9,7 @@ import { OpenCodeHarness } from './harness/opencode.ts';
 import { ConfigError, readConfig, type Config } from './inputs.ts';
 import { COMMENT_MARKER, renderReport, verdictRecord, type Action, type ReportInput } from './report.ts';
 import { scorePullRequest } from './score.ts';
-import { git } from './workspace.ts';
+import { baseFileReader } from './workspace.ts';
 
 export const STATUS_CONTEXT = 'ai-risk-scorer';
 export const LABEL_SAFE = 'ai-risk:safe';
@@ -41,8 +41,20 @@ async function run(config: Config): Promise<void> {
 
   const ctx = await resolveContext(gh, env.GITHUB_EVENT_NAME ?? '', event, config.baseBranches);
   if ('skip' in ctx) return skip(ctx.skip);
-  const { pr, meta, facts, baseSha, headSha } = ctx;
-  log(`PR #${pr.number}: ${pr.title} (head ${headSha.slice(0, 7)})`);
+  const { pr, meta, facts, baseSha, headSha, allowedBases } = ctx;
+  log(`PR #${pr.number} (head ${headSha.slice(0, 7)})`);
+
+  // A verdict belongs to one commit. This is a new run, so whatever an earlier
+  // run said no longer applies, even if this run stops early (red CI, pending
+  // checks). The commit status is per commit already; the label and comment are not.
+  if (config.mode !== 'shadow') await gh.removeLabel(pr.number, LABEL_SAFE);
+  if (config.comment) {
+    await gh.updateComment(
+      pr.number,
+      COMMENT_MARKER,
+      `${COMMENT_MARKER}\n### ⏳ AI Risk Scorer: commit \`${headSha.slice(0, 7)}\` is not scored yet\n\nThe earlier verdict was for an older commit and no longer applies.`,
+    );
+  }
 
   // G1: every other check on the head commit must be green.
   const ownSuite = env.GITHUB_RUN_ID ? await gh.checkSuiteOfRun(env.GITHUB_RUN_ID) : undefined;
@@ -76,10 +88,21 @@ async function run(config: Config): Promise<void> {
     facts,
     config,
     harness,
-    readBaseFile: async (path) => git(repoDir, ['show', `${baseSha}:${path}`]),
+    readBaseFile: baseFileReader(repoDir, baseSha),
     lock: true,
     log,
   });
+
+  // The review took minutes. Before acting, check that nothing which would
+  // have stopped the run happened meanwhile: a skip label, a new base branch...
+  if (result.mergeAllowed && config.mode !== 'shadow') {
+    const changes = changesSinceScored(pr, await gh.getPull(pr.number), allowedBases, config.skipLabel);
+    if (changes.length > 0) {
+      result.mergeAllowed = false;
+      result.decision.mergeAllowed = false;
+      result.decision.blockers.push(...changes.map((c) => `the PR changed during the review: ${c}`));
+    }
+  }
 
   // Act by mode. Shadow only writes things down.
   let action: Action = 'none';

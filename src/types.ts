@@ -13,9 +13,11 @@ export interface ChangedFile {
   additions: number;
   deletions: number;
   binary: boolean;
+  /** Set when the old or new version is a symlink or a submodule (git modes 120000, 160000). */
+  special?: 'symlink' | 'submodule';
 }
 
-export type GateId = 'fork' | 'skip-label' | 'self-protected' | 'protected-paths' | 'size';
+export type GateId = 'fork' | 'skip-label' | 'self-protected' | 'special-files' | 'lockfiles' | 'protected-paths' | 'size';
 
 export interface GateResult {
   id: GateId;

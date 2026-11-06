@@ -1,4 +1,5 @@
 import type { Config } from './inputs.ts';
+import { code, inline } from './markdown.ts';
 import type { ScoreResult } from './score.ts';
 import type { Mode } from './types.ts';
 
@@ -26,6 +27,8 @@ const GATE_NAMES: Record<string, string> = {
   fork: 'not a fork',
   'skip-label': 'no skip label',
   'self-protected': 'no self-protected files',
+  'special-files': 'no symlinks or unreadable binaries',
+  lockfiles: 'no lock files',
   'protected-paths': 'no protected paths',
   size: 'size',
 };
@@ -42,7 +45,7 @@ function headline(r: ReportInput): string {
 function gateLine(result: ScoreResult): string {
   const icon = (s: string) => (s === 'pass' ? '✅' : s === 'fail' ? '❌' : '⏭️');
   const ci = '✅ CI green';
-  const rest = result.gates.results.map((g) => (g.id === 'size' && g.status !== 'off' ? `${icon(g.status)} size: ${g.detail}` : `${icon(g.status)} ${g.status === 'off' ? `${GATE_NAMES[g.id]} off` : GATE_NAMES[g.id]}`));
+  const rest = result.gates.results.map((g) => (g.id === 'size' && g.status !== 'off' ? `${icon(g.status)} size: ${inline(g.detail)}` : `${icon(g.status)} ${g.status === 'off' ? `${GATE_NAMES[g.id]} off` : GATE_NAMES[g.id]}`));
   return [ci, ...rest].join(' · ');
 }
 
@@ -53,28 +56,29 @@ export function renderReport(r: ReportInput): string {
   const lines: string[] = [COMMENT_MARKER, `### ${headline(r)}`, ''];
   lines.push(`**Risk:** ${agg.risk ?? 'n/a'} · **Confidence:** ${stars(agg.confidence)} · **Mode:** ${r.mode} · **Commit:** \`${r.headSha.slice(0, 7)}\``, '');
   if (r.mode === 'shadow') lines.push('> Shadow mode: no action taken. This is what the scorer would have done.', '');
-  lines.push(agg.summary, '');
+  // Everything below that comes from the model or the PR is untrusted text.
+  lines.push(inline(agg.summary, 300), '');
 
   const why = result.mergeAllowed ? (r.action === 'merged' ? 'Why I merged it' : 'Why it is safe') : 'Why this needs a human';
   lines.push(`**${why}**`);
-  for (const reason of agg.reasons) lines.push(`- ${reason}`);
+  for (const reason of agg.reasons) lines.push(`- ${inline(reason)}`);
   if (!result.mergeAllowed && result.stoppedAt === 'ai') {
-    for (const b of result.decision.blockers) if (!agg.reasons.includes(b)) lines.push(`- Rule: ${b}.`);
+    for (const b of result.decision.blockers) if (!agg.reasons.includes(b)) lines.push(`- Rule: ${inline(b)}.`);
   }
-  for (const f of agg.failures) lines.push(`- The scorer could not finish: ${f}`);
-  if (r.action === 'merge-blocked' && r.mergeError) lines.push(`- GitHub refused the merge: ${r.mergeError}`);
+  for (const f of agg.failures) lines.push(`- The scorer could not finish: ${inline(f)}`);
+  if (r.action === 'merge-blocked' && r.mergeError) lines.push(`- GitHub refused the merge: ${inline(r.mergeError)}`);
   lines.push('');
 
   if (agg.affectedCode.length > 0) {
     lines.push('<details><summary>Code outside the diff that was checked</summary>', '');
-    for (const a of agg.affectedCode) lines.push(`- \`${a.location}\`: ${a.why}`);
+    for (const a of agg.affectedCode.slice(0, 30)) lines.push(`- ${code(a.location.slice(0, 200))}: ${inline(a.why, 300)}`);
     lines.push('', '</details>', '');
   }
 
   lines.push('<details><summary>Gates and run details</summary>', '', gateLine(result), '');
   if (result.review) {
     const cost = result.review.costUsd;
-    lines.push(`${result.filesChanged} files changed · ${result.slices} slice(s) · ${result.review.runs.length} reviewer run(s) · model \`${r.model}\`${cost > 0 ? ` · cost $${cost.toFixed(4)}` : ''}`);
+    lines.push(`${result.filesChanged} files changed · ${result.slices} slice(s) · ${result.review.runs.length} reviewer run(s) · model ${code(r.model)}${cost > 0 ? ` · cost $${cost.toFixed(4)}` : ''}`);
   } else {
     lines.push(`${result.filesChanged} files changed · stopped at \`${result.stoppedAt}\` before any AI call`);
   }

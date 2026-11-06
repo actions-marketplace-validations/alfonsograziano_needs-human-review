@@ -4,9 +4,15 @@ export type ParseResult = { ok: true; verdict: Verdict } | { ok: false; error: s
 
 const KEYS = ['decision', 'risk', 'confidence', 'summary', 'reasons', 'risk_areas', 'files_reviewed', 'affected_code'] as const;
 
+interface Found {
+  value: unknown;
+  start: number;
+  end: number;
+}
+
 /** Every top-level `{...}` in the text, found with a brace matcher that respects strings. */
-function jsonObjects(text: string): unknown[] {
-  const found: unknown[] = [];
+function jsonObjects(text: string): Found[] {
+  const found: Found[] = [];
   for (let start = text.indexOf('{'); start !== -1; start = text.indexOf('{', start + 1)) {
     let depth = 0;
     let inString = false;
@@ -25,7 +31,7 @@ function jsonObjects(text: string): unknown[] {
         depth--;
         if (depth === 0) {
           try {
-            found.push(JSON.parse(text.slice(start, i + 1)));
+            found.push({ value: JSON.parse(text.slice(start, i + 1)), start, end: i + 1 });
             start = i;
           } catch {
             // Not JSON; try the next brace.
@@ -48,11 +54,21 @@ export interface VerdictRules {
   runtimeChanged: boolean;
 }
 
-/** Takes the last JSON object in the final message and checks it strictly. */
+/**
+ * Finds the verdict in the final message and checks it strictly. The verdict
+ * must be the only JSON object with a "decision" field, it must end the message
+ * (a closing code fence is fine), and "decision" must not appear before it.
+ * Anything else is ambiguous: the model may be quoting text from the PR, and a
+ * verdict planted in the PR must never be taken for the model's own.
+ */
 export function parseVerdict(text: string, rules: VerdictRules): ParseResult {
-  const candidates = jsonObjects(text).filter((o) => o !== null && typeof o === 'object' && !Array.isArray(o) && 'decision' in o);
-  const obj = candidates[candidates.length - 1] as Record<string, unknown> | undefined;
-  if (!obj) return { ok: false, error: 'no JSON verdict in the answer' };
+  const candidates = jsonObjects(text).filter((o) => o.value !== null && typeof o.value === 'object' && !Array.isArray(o.value) && 'decision' in o.value);
+  if (candidates.length === 0) return { ok: false, error: 'no JSON verdict in the answer' };
+  if (candidates.length > 1) return { ok: false, error: 'more than one verdict-like JSON object in the answer' };
+  const found = candidates[0] as Found;
+  if (!/^\s*(```\s*)?$/.test(text.slice(found.end))) return { ok: false, error: 'the verdict is not at the end of the answer' };
+  if (/"decision"/.test(text.slice(0, found.start))) return { ok: false, error: 'the answer has another "decision" before the verdict' };
+  const obj = found.value as Record<string, unknown>;
 
   const extra = Object.keys(obj).filter((k) => !(KEYS as readonly string[]).includes(k));
   if (extra.length > 0) return { ok: false, error: `unknown fields: ${extra.join(', ')}` };

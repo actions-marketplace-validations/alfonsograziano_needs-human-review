@@ -36,11 +36,18 @@ test('protected paths match the old name of a renamed file', () => {
 });
 
 test('the size gate counts lines and files, without generated files', () => {
-  const files = [file('src/a.ts', { additions: 30, deletions: 10 }), file('package-lock.json', { additions: 5000, deletions: 2000 })];
+  const files = [file('src/a.ts', { additions: 30, deletions: 10 }), file('dist/app.min.js', { additions: 5000, deletions: 2000 })];
   assert.equal(runHardGates(files, noFork, testConfig({ maxLinesChanged: 50 })).stoppedAt, undefined);
   assert.equal(runHardGates(files, noFork, testConfig({ maxLinesChanged: 39 })).stoppedAt, 'size');
   assert.equal(runHardGates(files, noFork, testConfig({ maxFilesChanged: 1 })).stoppedAt, undefined);
   assert.equal(runHardGates(files, noFork, testConfig({ maxLinesChanged: 50, generatedDefaults: false })).stoppedAt, 'size');
+});
+
+test('a new or renamed-in generated file counts for size', () => {
+  const added = [file('src/dist/helpers.js', { status: 'added', additions: 300, deletions: 0 })];
+  assert.equal(runHardGates(added, noFork, testConfig({ maxLinesChanged: 50 })).stoppedAt, 'size');
+  const moved = [file('src/dist/auth.js', { status: 'renamed', previousPath: 'src/auth.js', additions: 300, deletions: 0 })];
+  assert.equal(runHardGates(moved, noFork, testConfig({ maxLinesChanged: 50 })).stoppedAt, 'size');
 });
 
 test('the first failing gate is reported, but all gates run', () => {
@@ -70,4 +77,37 @@ test('waitForCi polls a pending check until it finishes, or gives up', async () 
   const stuck = await waitForCi(async () => (slow++, { state: 'pending', names: ['x'] }), 40_000, 20_000, noSleep);
   assert.equal(stuck.state, 'pending');
   assert.equal(slow, 3, 'one first read, then two polls in 40 seconds');
+});
+
+test('a lock file change always needs a human, at any depth', () => {
+  const r = runHardGates([file('README.md'), file('web/package-lock.json')], noFork, testConfig());
+  assert.equal(r.stoppedAt, 'lockfiles');
+  assert.deepEqual(r.results.find((g) => g.id === 'lockfiles')?.files, ['web/package-lock.json']);
+});
+
+test('symlinks, submodules and unreadable binaries need a human; images do not', () => {
+  const special = (f: Parameters<typeof file>[1]) => runHardGates([file('x', f)], noFork, testConfig()).stoppedAt;
+  assert.equal(special({ special: 'symlink' }), 'special-files');
+  assert.equal(special({ special: 'submodule' }), 'special-files');
+  assert.equal(runHardGates([file('lib/addon.node', { binary: true })], noFork, testConfig()).stoppedAt, 'special-files');
+  assert.equal(runHardGates([file('docs/logo.PNG', { binary: true })], noFork, testConfig()).stoppedAt, undefined);
+});
+
+test('.gitattributes at any depth is self-protected', () => {
+  assert.equal(runHardGates([file('.gitattributes')], noFork, testConfig()).stoppedAt, 'self-protected');
+  assert.equal(runHardGates([file('src/.gitattributes')], noFork, testConfig()).stoppedAt, 'self-protected');
+});
+
+test('prompt files are matched as exact paths, so glob characters cannot hide them', () => {
+  const r = runHardGates([file('ai/prompt[v2].md')], noFork, testConfig(), ['./ai/prompt[v2].md']);
+  assert.equal(r.stoppedAt, 'self-protected');
+  assert.equal(runHardGates([file('ai/promptv.md')], noFork, testConfig(), ['ai/prompt[v2].md']).stoppedAt, undefined);
+});
+
+test('a protected folder written without a trailing slash protects its files', () => {
+  const cfg = testConfig({ protectedPaths: ['src/payments', '**/migrations'] });
+  assert.equal(runHardGates([file('src/payments/charge.ts')], noFork, cfg).stoppedAt, 'protected-paths');
+  assert.equal(runHardGates([file('db/migrations/001.sql')], noFork, cfg).stoppedAt, 'protected-paths');
+  assert.equal(runHardGates([file('migrations/001.sql')], noFork, cfg).stoppedAt, 'protected-paths');
+  assert.equal(runHardGates([file('src/payments.ts')], noFork, cfg).stoppedAt, undefined);
 });

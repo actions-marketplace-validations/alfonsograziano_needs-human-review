@@ -59,3 +59,28 @@ test('integrations are denied, except the provider of the model', () => {
     { action: 'integration.use', resource: 'opencode', effect: 'allow' },
   ]);
 });
+
+test('the agent gets no action inputs, GitHub or runner variables', async () => {
+  const { harnessEnv } = await import('../src/harness/opencode.ts');
+  const env = harnessEnv({
+    PATH: '/bin',
+    HOME: '/home/r',
+    OPENCODE_API_KEY: 'k',
+    ANTHROPIC_API_KEY: 'k2',
+    INPUT_GITHUB_TOKEN: 'secret',
+    GITHUB_TOKEN: 'secret',
+    ACTIONS_RUNTIME_TOKEN: 'secret',
+    ACTIONS_ID_TOKEN_REQUEST_TOKEN: 'secret',
+    RUNNER_TEMP: '/tmp',
+    SOME_OTHER_SECRET: 'secret',
+  });
+  assert.deepEqual(Object.keys(env).sort(), ['ANTHROPIC_API_KEY', 'HOME', 'OPENCODE_API_KEY', 'PATH']);
+});
+
+test('tool output is removed from the kept event log', async () => {
+  const { redactEvents } = await import('../src/harness/opencode.ts');
+  const raw = redactEvents(stdout);
+  assert.ok(!raw.includes('1: x'));
+  assert.ok(raw.includes('"path":"src/a.ts"'));
+  assert.ok(raw.includes('Thinking out loud.'));
+});

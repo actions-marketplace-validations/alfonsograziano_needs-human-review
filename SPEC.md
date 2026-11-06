@@ -1,6 +1,6 @@
 # AI Risk Scorer — Spec
 
-Status: v1 built, 2026-11-02 (spec v0.5). v0.5: implementation notes in section 16. v0.2: short fixed user message, read-only review workspace, big PRs split into slices. v0.3: the reviewer must read every changed file in full and do an impact pass, checked from the tool-call log. v0.4: confidence is 1 to 5 stars with fixed meanings, not a percentage. Owner: Alfonso Graziano.
+Status: v1 built, 2026-11-02 (spec v0.6). v0.6: fixes from the 2026-11-05 adversarial review (section 17). v0.5: implementation notes in section 16. v0.2: short fixed user message, read-only review workspace, big PRs split into slices. v0.3: the reviewer must read every changed file in full and do an impact pass, checked from the tool-call log. v0.4: confidence is 1 to 5 stars with fixed meanings, not a percentage. Owner: Alfonso Graziano.
 
 ## 1. What it is
 
@@ -47,7 +47,11 @@ flowchart TD
     L -- yes --> H
     L -- no --> S{G4: touches the action's own files?}
     S -- yes --> H
-    S -- no --> G{G5: touches a protected glob?}
+    S -- no --> SF{G4b: symlink, submodule or unreadable binary?}
+    SF -- yes --> H
+    SF -- no --> LF{G4c: changes a lock file?}
+    LF -- yes --> H
+    LF -- no --> G{G5: touches a protected glob?}
     G -- yes --> H
     G -- no --> Z{G6: too big? off by default}
     Z -- yes --> H
@@ -90,14 +94,31 @@ A PR that touches any of these files always needs a human:
 
 - `.github/workflows/**` and `.github/actions/**` — a PR could switch the action off or change its inputs.
 - `CODEOWNERS`, `.github/CODEOWNERS`, `docs/CODEOWNERS` — these decide who reviews what.
-- The files named in `system-prompt-file` and `custom-instructions-file`, if set.
+- `.gitattributes`, at any depth — attributes change how git diffs a file (`binary`, `-diff`). The action ignores the PR's attributes anyway (section 4.5).
+- The files named in `system-prompt-file` and `custom-instructions-file`, if set. These are compared as exact paths, never as globs, so a name like `prompt[v2].md` protects that file.
 - Any extra path in `self-protected-paths` (for config files a team keeps somewhere else).
 
 These paths are hard-coded in the action. No input can remove them. A team can only add to the list.
 
+### G4b. Special files (always on)
+
+A PR that adds, changes or removes one of these needs a human:
+
+- A symlink (git mode `120000`). A link can point outside the checkout, and the reviewer must read every changed file (section 4.6), so a link would make it open whatever the link points at.
+- A submodule (git mode `160000`). It points at code the reviewer cannot see.
+- A binary file, unless it is media or a font (images, `pdf`, audio, video, `woff`, `ttf`...). The reviewer cannot read it.
+
+The workspace checks the disk too: every changed file must be a regular file (`lstat`), or the review is refused.
+
+### G4c. Lock files (always on)
+
+A PR that changes a dependency lock file (`package-lock.json`, `npm-shrinkwrap.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lock`, `bun.lockb`, `deno.lock`, `Cargo.lock`, `poetry.lock`, `Pipfile.lock`, `uv.lock`, `Gemfile.lock`, `composer.lock`, `go.sum`, `packages.lock.json`, `gradle.lockfile`, `pubspec.lock`, `Podfile.lock`, `mix.lock`, `flake.lock`, at any depth) needs a human. A lock file can change where a package is downloaded from, and a reviewer cannot judge a 5,000-line lock diff. The default prompt already calls dependency changes high risk, so this only makes the answer certain.
+
 ### G5. Protected globs
 
 `protected-paths` is a list of globs, one per line. If at least one changed file matches, the PR needs a human. No AI call. Examples: `payments/**`, `**/migrations/**`, `*.tf`, `auth/**`, `.env*`.
+
+Globs work like `.gitignore`. A glob without a slash matches a file or a folder of that name anywhere (`payments` matches `src/payments/charge.ts`). A glob with a slash matches from the repo root, and when it names a folder it covers everything inside (`src/payments` and `**/migrations` protect the files under them).
 
 A renamed file is checked with both its old name and its new name. So moving `payments/charge.ts` to `utils/charge.ts` still counts as touching `payments/**`.
 
@@ -109,12 +130,12 @@ Big PRs are hard to judge and easy to hide things in. This gate sends a PR to a 
 |---|---|---|
 | `max-lines-changed` | `0` (off) | Additions plus deletions, summed over the counted files. Above this, needs a human. |
 | `max-files-changed` | `0` (off) | Number of counted files. Above this, needs a human. |
-| `generated-paths` | built-in list, see below | Globs for generated files. Left out of both counts, and their patches are not sent for review (section 4.7). |
+| `generated-paths` | built-in list, see below | Globs for generated files. A change to an existing generated file is left out of both counts. Its content is still reviewed (section 4.7). |
 | `generated-defaults` | `true` | Use the built-in list. Set to `false` to use only your own list. |
 
-Built-in `generated-paths` list: `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lock`, `bun.lockb`, `Cargo.lock`, `poetry.lock`, `uv.lock`, `Gemfile.lock`, `composer.lock`, `go.sum`, `**/*.min.js`, `**/*.min.css`, `**/*.map`, `**/*.snap`, `**/__snapshots__/**`, `**/dist/**`, `**/*.generated.*`, `**/*.pb.go`.
+Built-in `generated-paths` list: the lock files of G4c, `**/*.min.js`, `**/*.min.css`, `**/*.map`, `**/*.snap`, `**/__snapshots__/**`, `**/dist/**`, `**/*.generated.*`, `**/*.pb.go`.
 
-Generated files are still checked against protected globs (G4 and G5), and the AI still sees that they changed.
+Generated files are still checked against every other gate, and the AI reviews them like any file. Only a file that already existed and is `modified` or `removed` leaves the count: the PR chooses file names, so a new file in `dist/`, or a file renamed into it, counts like any other.
 
 This gate is a team's choice to keep big PRs away from the AI. It is not needed for the AI to cope with them: big PRs are split into slices and every line is reviewed (section 4.7).
 
@@ -148,6 +169,7 @@ The action ships one default prompt in `prompts/system.md`. It tells the model w
 
 - `system-prompt` (inline text) or `system-prompt-file` (a path in the repo): **replaces the default prompt completely.** This gives full control.
 - If both are set, the action fails safe: it refuses to run and asks for a human.
+- A prompt file must be a non-empty text file on the base branch. It is read with `git cat-file blob`, so a folder or a missing path is an error, not a tree listing. An empty file, a folder, a missing file or a binary file means needs a human, with the reason in the comment. This applies to `custom-instructions-file` too. An empty inline `system-prompt` means "not set": the default prompt is used.
 
 ### 4.2 Custom instructions
 
@@ -182,6 +204,7 @@ Before the agent starts, the action prepares one workspace on the runner:
    - `base/<path>`: the old version of each changed file, as it is on the base branch. The new version is the file itself, in the repo.
    - `slices/<n>.json`: which files belong to which slice (section 4.7), and for each file its patch, its full new version and its old version.
    The name is random and the folder is wiped first, so a PR cannot plant fake files there.
+   Every `git diff` runs with `--attr-source=<empty tree>`, `--no-ext-diff` and `--no-textconv`. The PR's `.gitattributes` cannot mark code as binary or hide its diff, which would also zero its line count for G6. Base-branch files are read with `git cat-file blob`.
 3. **Read-only.** After the folder is written, the action makes the whole workspace read-only on disk (`chmod -R a-w`). The agent's own permissions also deny edits (section 6.2). Two locks, not one.
 
 The agent gets no shell. It does not need one: every patch and every old version is a plain file it can read, and the repo is there to open and search. Leaving the shell out removes the biggest attack surface (section 9.3).
@@ -200,7 +223,7 @@ A reviewer who only reads the patch cannot see any of these. So the scorer does 
 1. **Function context in every patch.** Patches are made with `--function-context`, so even the patch alone shows the whole function around each change.
 2. **The whole file, required.** For every changed file in its slice, the reviewer must read the full new version. The old version is there too (`base/<path>`), so it can compare what the code did before with what it does now.
 3. **Impact, required.** The prompt asks for an explicit impact pass (Appendix A): what unchanged code calls or depends on the changed code, what code paths can now reach it, and what behaves differently even though its lines did not change. The reviewer searches the repo for callers with its read-only tools. The answer goes into the verdict as `affected_code` (section 5), so a human sees what was checked.
-4. **Proof of reading, checked in code.** The harness reports which files the agent actually opened, from its tool-call log (section 6.1). After each run, the action checks that log: every changed file in the slice must have been read in full. If one was not, the verdict is invalid and the PR needs a human. The model cannot claim it read a file. The log shows whether it did. Read tools often stop at a few thousand lines per call (OpenCode stops at 2,000), so the action merges all the line ranges the agent read for a file. The file counts as read in full when those ranges cover every line.
+4. **Proof of reading, checked in code.** The harness reports which files the agent actually opened, from its tool-call log (section 6.1). After each run, the action checks that log: every changed file in the slice must have been read in full. If one was not, the verdict is invalid and the PR needs a human. The model cannot claim it read a file. The log shows whether it did. Read tools often stop at a few thousand lines per call (OpenCode stops at 2,000), so the action merges all the line ranges the agent read for a file. The file counts as read in full when those ranges cover every line. The read tool also cuts lines longer than 2,000 characters while still reporting the line as read, so code past the cut would be invisible. A changed file (or patch) with a line longer than 2,000 characters means needs a human, before any reviewer runs.
 
 The integrator (section 4.7, step 5) does the same at the level of the whole PR: it looks at how changes in different slices affect each other and the code around them.
 
@@ -208,7 +231,7 @@ The integrator (section 4.7, step 5) does the same at the level of the whole PR:
 
 A PR can be too big for one context window. The action never cuts a diff and never skips a file. Instead it splits the work into slices and reviews every slice. The splitting and the final decision are done by the action's TypeScript code, not by the model. The model is good at judging a slice. It should not be the one deciding whether all slices were reviewed, or how to add up their verdicts.
 
-**Step 1: put generated files aside.** Files matching `generated-paths` (lock files, minified files, snapshots, build output, see section 3, G6) are listed in `pr.json` with their line counts, but their patches are not sent for review. A 5,000-line `package-lock.json` diff tells a reviewer nothing that `package.json` does not. They are still checked against protected globs, and the reviewer still sees that they changed.
+**Step 1: mark generated files.** Files matching `generated-paths` (minified files, snapshots, build output, see section 3, G6) are marked `generated` in `pr.json`. They are reviewed like any other file: the name is chosen by the PR, so it proves nothing about the content. Lock files never get this far (G4c). A minified file has lines too long to read, so it goes to a human (section 4.6).
 
 **Step 2: measure.** For each changed file, the action estimates the size of its patch plus its full new version in tokens (bytes divided by 4, a safe rough count). The full file counts, because the reviewer must read it (section 4.6).
 
@@ -281,7 +304,7 @@ The model must answer with one JSON object:
 | `files_reviewed` | array of strings | Required for slice reviewers. Every file in the slice must be listed, or the verdict is invalid. The integrator leaves it empty. |
 | `affected_code` | array of `{ location, why }`, at most 10 | Required, can be empty only when the change cannot reach other code (docs, comments, a new test). Unchanged code whose behavior can change because of this PR: `location` is `path:line`, `why` is one sentence. A `"safe"` verdict on a PR that changes runtime code with an empty `affected_code` is invalid: the reviewer did not do the impact pass. |
 
-Validation is strict. The action takes the last JSON object in the model's final message (it may be inside a code fence). If there is no JSON, if a field is missing or has the wrong type, or if there are extra fields, the verdict is invalid and the PR needs a human.
+Validation is strict. The verdict must be the only JSON object with a `"decision"` field in the model's final message. It must end the message (it may be inside a code fence), and `"decision"` must not appear before it. Prose before it is fine. A model that quotes text from the PR, or whose answer is cut off, could otherwise have a verdict planted in the PR taken for its own. If there is no JSON, more than one candidate, a field missing or of the wrong type, or extra fields, the verdict is invalid and the PR needs a human.
 
 `"safe"` with `"high"` risk is a contradiction. It counts as invalid.
 
@@ -351,6 +374,8 @@ v1 ships `opencode`. `pi` and `claude-code` are planned (section 14). The `harne
 
 - The action installs a pinned OpenCode release (`opencode-version` input, default `2.2.5`) from github.com/anomalyco/opencode. OpenCode 2 is not on npm.
 - It passes the config inline (`OPENCODE_CONFIG_CONTENT`) with one custom agent, `risk-scorer`. The agent's `system` is the system prompt. Its `permissions` start with a deny-all rule, then allow only `read`, `grep` and `glob` back (later rules win). `policies` deny MCP servers, skills, plugins and integrations. OpenCode then does not even offer the other tools to the model.
+- The agent process gets an allow-listed environment: what a CLI needs (`PATH`, `HOME`, locale, temp and proxy variables, `XDG_*`) and the model's credentials (`OPENCODE_*`, `*_API_KEY`, `*_BASE_URL`, `AWS_*`, `GOOGLE_*`, `AZURE_*`). Never `INPUT_*` (that holds the GitHub token), `GITHUB_*`, `ACTIONS_*` or `RUNNER_*`. Whatever the agent can read, the model can repeat.
+- The raw event log kept for the verdict record has every tool's output removed. It keeps which tools ran on which paths and the model's text, never file content.
 - It sets `OPENCODE_DISABLE_PROJECT_CONFIG=1`, so an `opencode.json` or `.opencode/` folder in the PR cannot change the agent, and sets `PWD` to the workdir, because OpenCode takes its project root from `PWD`.
 - It runs `opencode run --standalone --agent risk-scorer --model <model> --format json` with the PR message, inside the checked-out repo.
 - The reads for the proof-of-reading check come from completed `read` tool calls in the JSON event stream. The line range is taken from the tool's own output ("Read file x, lines 1-2000"), not from what the model asked for.
@@ -375,13 +400,18 @@ A team can turn off the comment in any mode with `comment: false`.
 
 - It merges with the REST API, using `merge-method` (default `squash`).
 - It passes the head SHA it scored. If the PR changed since, GitHub refuses the merge, and the action reports that a human must check.
+- The review takes minutes, and the head SHA is all the merge call pins. So right before labelling and merging, the action reads the PR again. If it was closed, turned into a draft, retargeted to another base branch, given a new head or the skip label, the result is needs a human, with the reason.
 - It never uses admin rights and never bypasses branch protection. If the merge is blocked (for example a required review), it falls back: it posts the verdict, adds the `ai-risk:safe` label, and says why it could not merge.
 
 ## 8. What it writes
 
 ### 8.1 The PR comment
 
-One comment per PR, found by a hidden marker and edited on every run, so the PR does not fill with bot comments.
+One comment per PR, found by a hidden marker and edited on every run, so the PR does not fill with bot comments. Only a comment written by a bot account (the token's identity) that starts with the marker counts; a person can paste the marker into their own comment, and that comment is never edited.
+
+A verdict belongs to one commit. As soon as G0 passes on a new head, the action removes `ai-risk:safe` (advisory and autonomous) and changes an existing comment to say the new commit is not scored yet. This happens before G1, so a run that stops early (red or pending CI) never leaves an old "safe" behind.
+
+Text from the model (summary, reasons, `affected_code`) and from the PR (file names) is untrusted. In the comment it is escaped: newlines are collapsed, HTML, images and links are broken, `@mentions` do not ping, file names are code spans, and each field has a length cap.
 
 Safe and merged:
 
@@ -424,7 +454,7 @@ When the scorer fails, the comment says so plainly: "The scorer could not finish
 ### 8.2 Logs
 
 - **Job summary:** the same content as the comment, plus timings.
-- **Artifact:** `ai-risk-scorer-verdict.json` with the PR number, head SHA, mode, every gate result, the parsed verdict, the final decision, the model, the harness, the duration and the raw harness output. This is the raw material for the v2 override log.
+- **Artifact:** `ai-risk-scorer-verdict.json` with the PR number, head SHA, mode, every gate result, the parsed verdict, the final decision, the model, the harness, the duration and the harness event log without tool output (section 6.2). This is the raw material for the v2 override log.
 
 ### 8.3 Action outputs
 
@@ -480,6 +510,11 @@ The README says this plainly: the AI step lowers risk, it does not remove it. Th
 | `"safe"` on runtime code with an empty `affected_code` | needs a human |
 | More slices than `max-slices` | needs a human |
 | Review folder cannot be written or made read-only | needs a human |
+| A changed path is a symlink, a submodule or not a regular file | needs a human |
+| A changed line is longer than the read tool shows (2,000 characters) | needs a human |
+| More than one verdict-like object, or the verdict is not at the end | needs a human |
+| The PR changed during the review (closed, draft, new base, skip label) | needs a human |
+| A prompt file is empty, a folder, missing or binary | needs a human |
 | Bad action config (both prompt inputs set, unknown mode, bad glob) | needs a human, and the job fails so the team sees it |
 | GitHub API error before the decision | needs a human if a comment can be posted; otherwise the job fails. Never merges. |
 | Head SHA changed while scoring | needs a human, the merge is refused by GitHub |
@@ -722,3 +757,17 @@ If you are between two levels, pick the lower one.
 
 Write short, concrete reasons a busy engineer can check in seconds. Name files and functions. Do not repeat the diff. Do not praise the code.
 ```
+
+## 17. Changes from the adversarial review (2026-11-05)
+
+Each one closes an attack that worked against v0.5, and each has a regression test in `test/`.
+
+- **Symlinks.** A symlink in the PR made the reviewer read files outside the checkout, because proof of reading forces it to open every changed file. The content then went into the uploaded artifact. Now: G4b, an `lstat` check in the workspace, an allow-listed agent environment, and no tool output in the record.
+- **`.gitattributes`.** The PR's attributes could mark code binary: 0 lines for G6 and nothing to read. Now git ignores them, and `.gitattributes` is self-protected.
+- **Generated files.** Code in `dist/` and lock file edits were never reviewed. Now lock files are G4c, generated files are reviewed, and only existing generated files leave the size count.
+- **Verdict parsing.** The last parseable object won, so a verdict quoted from the PR beat a broken or cut-off answer. Now exactly one candidate, at the end.
+- **Long lines.** The read tool cut long lines but reported them as read. Now a line over 2,000 characters means needs a human.
+- **Merge race.** A skip label or a base-branch change made during the review was ignored. Now the PR is read again before acting.
+- **Stale verdicts.** A run that stopped early left `ai-risk:safe` and a "safe" comment on new commits. Now both are cleared as soon as a new head is seen.
+- **Config.** Folder globs without a trailing slash protected nothing; an empty or folder prompt file was accepted; glob characters in a prompt path escaped self-protection. All fixed (sections G4, G5, 4.1).
+- **Comment.** Anyone could take over the sticky comment with the marker, and model text or file names could inject Markdown. Now only a bot comment starting with the marker is ours, and untrusted text is escaped.

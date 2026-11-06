@@ -37,3 +37,11 @@ test('docs and tests are recognised', () => {
   assert.equal(isDocOrTest('test/unit/date.ts'), true);
   assert.equal(isDocOrTest('src/date.ts'), false);
 });
+
+test('globs name folders like .gitignore does', () => {
+  assert.equal(matchesGlobPattern('src/payments/charge.ts', 'src/payments'), true);
+  assert.equal(matchesGlobPattern('src/payments/charge.ts', 'payments'), true);
+  assert.equal(matchesGlobPattern('db/migrations/1.sql', '**/migrations'), true);
+  assert.equal(matchesGlobPattern('src/paymentsX/charge.ts', 'src/payments'), false);
+  assert.equal(matchesGlobPattern('infra/main.tf', '*.tf'), true);
+});

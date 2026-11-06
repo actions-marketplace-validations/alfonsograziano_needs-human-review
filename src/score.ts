@@ -3,6 +3,7 @@ import { decide, type Decision } from './decide.ts';
 import { runHardGates, type GateReport, type PrFacts } from './gates.ts';
 import type { Harness } from './harness/types.ts';
 import type { Config } from './inputs.ts';
+import { code } from './markdown.ts';
 import { loadSystemPrompt, type BaseFileReader, type PrMeta } from './prompt.ts';
 import { runReview, type ReviewResult } from './review.ts';
 import type { GateId } from './types.ts';
@@ -57,7 +58,7 @@ export async function scorePullRequest(opts: ScoreOptions): Promise<ScoreResult>
 
   if (gates.stoppedAt) {
     const gate = gates.results.find((g) => g.id === gates.stoppedAt);
-    const reasons = [gate?.detail ?? 'A hard gate failed.', ...(gate?.files ?? []).slice(0, 20).map((f) => `\`${f}\``)];
+    const reasons = [gate?.detail ?? 'A hard gate failed.', ...(gate?.files ?? []).slice(0, 20).map(code)];
     return stopped(gates.stoppedAt, humanOnly('A fixed rule sends this PR to a human. The AI was not asked.', reasons));
   }
 

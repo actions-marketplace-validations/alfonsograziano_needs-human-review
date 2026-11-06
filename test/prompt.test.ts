@@ -42,3 +42,15 @@ test('PR text cannot close the untrusted tags', () => {
   assert.equal(m.match(/<\/pr_body>/g)?.length, 1);
   assert.ok(m.includes('(a bot)'));
 });
+
+test('an empty or unreadable prompt file is an error, not an empty prompt', async () => {
+  const files: Record<string, string> = { 'empty.md': '  \n', 'bin.md': 'a\0b' };
+  const read = async (p: string) => {
+    if (p in files) return files[p] as string;
+    throw new Error('fatal: bad file');
+  };
+  await assert.rejects(loadSystemPrompt(testConfig({ systemPromptFile: 'empty.md' }), read), /is empty/);
+  await assert.rejects(loadSystemPrompt(testConfig({ systemPromptFile: 'bin.md' }), read), /not a text file/);
+  await assert.rejects(loadSystemPrompt(testConfig({ systemPromptFile: 'ai' }), read), /not a file on the base branch/);
+  await assert.rejects(loadSystemPrompt(testConfig({ customInstructionsFile: 'empty.md' }), read), /custom-instructions-file/);
+});

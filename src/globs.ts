@@ -9,22 +9,45 @@ export const SELF_PROTECTED_PATHS: readonly string[] = [
   'docs/CODEOWNERS',
   // A PR that ships something shaped like our review folder is trying to fool the reviewer.
   '.ai-risk-scorer-*/**',
+  // Attributes change how git diffs a file: binary, -diff, textconv. The action
+  // ignores the PR's attributes, and a PR that edits them needs a human.
+  '.gitattributes',
 ];
 
-/** Generated files: not counted for size, patches not sent for review. */
-export const GENERATED_DEFAULTS: readonly string[] = [
+/** Dependency lock files, at any depth. A change here is a dependency change: always a human. */
+export const LOCKFILES: readonly string[] = [
   'package-lock.json',
   'npm-shrinkwrap.json',
   'pnpm-lock.yaml',
   'yarn.lock',
   'bun.lock',
   'bun.lockb',
+  'deno.lock',
   'Cargo.lock',
   'poetry.lock',
+  'Pipfile.lock',
   'uv.lock',
   'Gemfile.lock',
   'composer.lock',
   'go.sum',
+  'packages.lock.json',
+  'gradle.lockfile',
+  'pubspec.lock',
+  'Podfile.lock',
+  'mix.lock',
+  'flake.lock',
+];
+
+/** Binary files the reviewer may skip: media and fonts. Any other binary needs a human. */
+const BINARY_ASSET_EXTENSIONS = new Set([
+  'png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'bmp', 'ico', 'tif', 'tiff',
+  'woff', 'woff2', 'ttf', 'otf', 'eot',
+  'pdf', 'mp3', 'mp4', 'webm', 'ogg', 'wav', 'mov',
+]);
+
+/** Generated files: left out of the size count only. Their content is still reviewed. */
+export const GENERATED_DEFAULTS: readonly string[] = [
+  ...LOCKFILES,
   '**/*.min.js',
   '**/*.min.css',
   '**/*.map',
@@ -57,22 +80,38 @@ function normalizeGlob(glob: string): string {
 }
 
 /**
- * Matches like .gitignore: a glob with no slash matches the file name anywhere
- * in the tree (`*.tf` matches `infra/main.tf`), a glob with a slash matches
- * from the repo root (`payments/**`). Dot files and folders match too.
+ * Matches like .gitignore. A glob with no slash matches a file or a folder of
+ * that name anywhere in the tree (`*.tf` matches `infra/main.tf`, `payments`
+ * matches `src/payments/charge.ts`). A glob with a slash matches from the repo
+ * root, and when it names a folder it covers everything inside it
+ * (`src/payments` and `db/migrations` protect the files under them). Dot
+ * files and folders match too.
  */
 export function matchesGlobPattern(filePath: string, glob: string): boolean {
   const path = normalizePath(filePath);
   const g = normalizeGlob(glob);
   if (g === '') return false;
   if (!g.includes('/')) {
-    const base = path.slice(path.lastIndexOf('/') + 1);
-    return matchesGlob(base, g) || matchesGlob(path, g);
+    return matchesGlob(path, g) || path.split('/').some((segment) => matchesGlob(segment, g));
   }
-  if (matchesGlob(path, g)) return true;
   // `**/x` should also match `x` at the root.
-  if (g.startsWith('**/')) return matchesGlob(path, g.slice(3));
-  return false;
+  const candidates = g.startsWith('**/') ? [g, g.slice(3)] : [g];
+  return candidates.some((c) => matchesGlob(path, c) || (!c.endsWith('**') && matchesGlob(path, `${c}/**`)));
+}
+
+/** Compares two repo paths literally, ignoring a leading `./` or `/`. For config that names one file, not a glob. */
+export function samePath(a: string, b: string): boolean {
+  const clean = (p: string) => normalizePath(p.trim()).replace(/^\/+/, '');
+  return clean(a) === clean(b);
+}
+
+export function isLockfile(filePath: string): boolean {
+  return matchesAny(filePath, LOCKFILES);
+}
+
+export function isBinaryAsset(filePath: string): boolean {
+  const dot = filePath.lastIndexOf('.');
+  return dot > filePath.lastIndexOf('/') && BINARY_ASSET_EXTENSIONS.has(filePath.slice(dot + 1).toLowerCase());
 }
 
 export function matchesAny(filePath: string, globs: readonly string[]): boolean {

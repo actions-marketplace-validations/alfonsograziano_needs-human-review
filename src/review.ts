@@ -1,12 +1,13 @@
 import { aggregate, type Aggregate, type RunOutcome } from './aggregate.ts';
 import { isDocOrTest } from './globs.ts';
+import { code } from './markdown.ts';
 import type { Harness, HarnessResult } from './harness/types.ts';
 import type { Config } from './inputs.ts';
 import { integratorMessage, sliceMessage, type PrMeta, type SliceSummary } from './prompt.ts';
 import { describeRequirement, missingReads } from './reading.ts';
 import type { GateResult } from './types.ts';
 import { parseVerdict } from './verdict.ts';
-import type { Workspace } from './workspace.ts';
+import { MAX_LINE_CHARS, type Workspace } from './workspace.ts';
 
 export interface RunLog {
   label: string;
@@ -52,7 +53,16 @@ export async function runReview(opts: ReviewOptions): Promise<ReviewResult> {
   const total = ws.slices.length;
 
   if (total === 0) {
-    return { aggregate: humanOnly('Only generated files changed (for example lock files). There is nothing for the AI to review, so a human must check the dependency change.'), runs: [], skipped: 'no reviewable files', costUsd: 0 };
+    return { aggregate: humanOnly('The PR has no file the AI can review, so a human must check it.'), runs: [], skipped: 'no reviewable files', costUsd: 0 };
+  }
+  if (ws.longLines.length > 0) {
+    const shown = ws.longLines.slice(0, 10).map(code).join(', ');
+    return {
+      aggregate: humanOnly(`Some changed lines are longer than ${MAX_LINE_CHARS} characters, so the reviewer could not read them in full: ${shown}${ws.longLines.length > 10 ? ', …' : ''}.`),
+      runs: [],
+      skipped: 'long lines',
+      costUsd: 0,
+    };
   }
   if (config.maxSlices > 0 && total > config.maxSlices) {
     return { aggregate: humanOnly(`Too big to review within the cost limit: ${total} slices, the limit is ${config.maxSlices}.`), runs: [], skipped: 'max-slices', costUsd: 0 };

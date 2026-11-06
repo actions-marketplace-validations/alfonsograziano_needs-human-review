@@ -22,6 +22,16 @@ export interface PullRequest {
   head: { ref: string; sha: string; repo: { full_name: string } | null };
 }
 
+export interface IssueComment {
+  id: number;
+  body?: string;
+  user?: { login: string; type: string } | null;
+}
+
+export function isOwnComment(c: IssueComment, marker: string): boolean {
+  return c.user?.type === 'Bot' && (c.body ?? '').startsWith(marker);
+}
+
 /** A small REST client on fetch. Only what the action needs. */
 export class GitHub {
   readonly #token: string;
@@ -99,21 +109,38 @@ export class GitHub {
     return checks;
   }
 
+  /**
+   * The sticky comment: written by a bot (the token's identity: github-actions
+   * or a GitHub App) and starting with the marker. A person can paste the
+   * marker into their own comment; that comment is never ours.
+   */
+  async findComment(n: number, marker: string): Promise<number | undefined> {
+    const comments = await this.paginate<IssueComment>(`/repos/${this.repo}/issues/${n}/comments`, (p) => p);
+    return comments.find((c) => isOwnComment(c, marker))?.id;
+  }
+
   /** Creates or updates the one comment that carries the marker. */
   async upsertComment(n: number, marker: string, body: string): Promise<void> {
-    const comments = await this.paginate<{ id: number; body?: string }>(`/repos/${this.repo}/issues/${n}/comments`, (p) => p);
-    const mine = comments.find((c) => c.body?.includes(marker));
-    if (mine) await this.request('PATCH', `/repos/${this.repo}/issues/comments/${mine.id}`, { body });
+    const id = await this.findComment(n, marker);
+    if (id !== undefined) await this.request('PATCH', `/repos/${this.repo}/issues/comments/${id}`, { body });
     else await this.request('POST', `/repos/${this.repo}/issues/${n}/comments`, { body });
+  }
+
+  /** Updates the comment only if it already exists. */
+  async updateComment(n: number, marker: string, body: string): Promise<void> {
+    const id = await this.findComment(n, marker);
+    if (id !== undefined) await this.request('PATCH', `/repos/${this.repo}/issues/comments/${id}`, { body });
+  }
+
+  async removeLabel(n: number, name: string): Promise<void> {
+    await this.request('DELETE', `/repos/${this.repo}/issues/${n}/labels/${encodeURIComponent(name)}`).catch((e: unknown) => {
+      if (!(e instanceof GitHubError && e.status === 404)) throw e;
+    });
   }
 
   async setLabel(n: number, add: string, remove: string[]): Promise<void> {
     await this.request('POST', `/repos/${this.repo}/issues/${n}/labels`, { labels: [add] });
-    for (const r of remove) {
-      await this.request('DELETE', `/repos/${this.repo}/issues/${n}/labels/${encodeURIComponent(r)}`).catch((e: unknown) => {
-        if (!(e instanceof GitHubError && e.status === 404)) throw e;
-      });
-    }
+    for (const r of remove) await this.removeLabel(n, r);
   }
 
   async setStatus(sha: string, state: 'success' | 'failure' | 'pending', context: string, description: string): Promise<void> {

@@ -15,7 +15,7 @@ export interface WorkflowRunEvent {
 
 export type Context =
   | { skip: string }
-  | { pr: PullRequest; meta: PrMeta; facts: PrFacts; baseSha: string; headSha: string };
+  | { pr: PullRequest; meta: PrMeta; facts: PrFacts; baseSha: string; headSha: string; allowedBases: string[] };
 
 /**
  * G0. Finds the PR for the finished workflow run and checks that it is open,
@@ -51,6 +51,7 @@ export async function resolveContext(gh: GitHub, eventName: string, event: Workf
     pr,
     headSha,
     baseSha: pr.base.sha,
+    allowedBases: allowed,
     facts: { isFork, labels: pr.labels.map((l) => l.name) },
     meta: {
       number: pr.number,
@@ -62,4 +63,20 @@ export async function resolveContext(gh: GitHub, eventName: string, event: Workf
       headSha,
     },
   };
+}
+
+/**
+ * What changed on the PR since it was scored, that would have stopped the run.
+ * Called right before acting, because a review takes minutes and the merge
+ * call only pins the head commit. Empty means nothing that matters changed.
+ */
+export function changesSinceScored(scored: PullRequest, now: PullRequest, allowedBases: string[], skipLabel: string): string[] {
+  const changes: string[] = [];
+  if (now.state !== 'open') changes.push(`it is now ${now.state}`);
+  if (now.draft) changes.push('it is now a draft');
+  if (now.head.sha !== scored.head.sha) changes.push(`its head moved to ${now.head.sha.slice(0, 7)}`);
+  if (now.base.ref !== scored.base.ref) changes.push(`its base branch changed from ${scored.base.ref} to ${now.base.ref}`);
+  else if (!allowedBases.includes(now.base.ref)) changes.push(`its base branch ${now.base.ref} is not allowed`);
+  if (now.labels.some((l) => l.name === skipLabel)) changes.push(`it has the label "${skipLabel}"`);
+  return changes;
 }

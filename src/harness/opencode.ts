@@ -79,6 +79,47 @@ export function readFromToolPart(workdir: string, part: ToolPart): FileRead | un
   return limit === undefined ? { path, fromLine: from } : { path, fromLine: from, toLine: from + limit - 1 };
 }
 
+/**
+ * The environment the agent gets. Only what a CLI needs to run and to reach
+ * the model: never the action inputs (INPUT_GITHUB_TOKEN), runner tokens or
+ * anything else from the job. What the agent can read, the model can repeat.
+ */
+const ENV_ALLOW = new Set(['PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'TMP', 'TEMP', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TERM', 'TZ', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'NODE_EXTRA_CA_CERTS', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'no_proxy']);
+const ENV_ALLOW_PATTERN = /^(XDG_[A-Z_]+|OPENCODE_[A-Z0-9_]+|[A-Z0-9_]+_API_KEY|[A-Z0-9_]+_BASE_URL|AWS_[A-Z0-9_]+|GOOGLE_[A-Z0-9_]+|AZURE_[A-Z0-9_]+)$/;
+
+export function harnessEnv(source: Record<string, string | undefined>): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries(source)) {
+    if (v === undefined || k.startsWith('INPUT_') || k.startsWith('GITHUB_') || k.startsWith('ACTIONS_') || k.startsWith('RUNNER_')) continue;
+    if (ENV_ALLOW.has(k) || ENV_ALLOW_PATTERN.test(k)) env[k] = v;
+  }
+  return env;
+}
+
+/**
+ * The event log without what tools returned. Tool output is file content: it
+ * stays on the runner. The record keeps which tools ran, on what, and the text.
+ */
+export function redactEvents(stdout: string): string {
+  return stdout
+    .split('\n')
+    .map((line) => {
+      if (!line.trim().startsWith('{')) return line;
+      try {
+        const e = JSON.parse(line) as { part?: { state?: Record<string, unknown> } };
+        const state = e.part?.state;
+        if (!state) return line;
+        delete state.output;
+        delete state.metadata;
+        delete state.attachments;
+        return JSON.stringify(e);
+      } catch {
+        return '[unparsed line removed]';
+      }
+    })
+    .join('\n');
+}
+
 export interface ParsedEvents {
   finalText: string;
   reads: FileRead[];
@@ -134,7 +175,7 @@ export class OpenCodeHarness implements Harness {
   run(input: HarnessInput): Promise<HarnessResult> {
     const started = Date.now();
     const env = {
-      ...process.env,
+      ...harnessEnv(process.env),
       // OpenCode takes its project root from PWD, not from the process cwd.
       PWD: input.workdir,
       OPENCODE_CONFIG_CONTENT: JSON.stringify(opencodeConfig(input.systemPrompt, input.model)),
@@ -162,7 +203,7 @@ export class OpenCodeHarness implements Harness {
       });
       child.on('close', (code) => {
         clearTimeout(timer);
-        const raw = stdout;
+        const raw = redactEvents(stdout);
         if (timedOut) return reject(new HarnessError(`timed out after ${Math.round(input.timeoutMs / 60_000)} minutes`, raw));
         const parsed = parseEvents(input.workdir, stdout);
         if (code !== 0) {

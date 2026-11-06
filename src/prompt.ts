@@ -29,16 +29,29 @@ export function assembleSystemPrompt(base: string, custom: string, contract: str
   return `${parts.join('\n\n')}\n`;
 }
 
+/** Reads a configured prompt file. An empty file is a config mistake, not "no instructions". */
+async function readPromptFile(input: string, path: string, readBaseFile: BaseFileReader): Promise<string> {
+  let text: string;
+  try {
+    text = await readBaseFile(path);
+  } catch (e) {
+    throw new Error(`${input} "${path}" is not a file on the base branch (${(e as Error).message.split('\n')[0]})`);
+  }
+  if (text.trim() === '') throw new Error(`${input} "${path}" is empty`);
+  if (text.includes('\0')) throw new Error(`${input} "${path}" is not a text file`);
+  return text;
+}
+
 export async function loadSystemPrompt(config: Config, readBaseFile: BaseFileReader): Promise<string> {
   const base = config.systemPrompt
     ? config.systemPrompt
     : config.systemPromptFile
-      ? await readBaseFile(config.systemPromptFile)
+      ? await readPromptFile('system-prompt-file', config.systemPromptFile, readBaseFile)
       : await readFile(`${PROMPTS_DIR}system.md`, 'utf8');
   const custom = config.customInstructions
     ? config.customInstructions
     : config.customInstructionsFile
-      ? await readBaseFile(config.customInstructionsFile)
+      ? await readPromptFile('custom-instructions-file', config.customInstructionsFile, readBaseFile)
       : '';
   const contract = await readFile(`${PROMPTS_DIR}contract.md`, 'utf8');
   return assembleSystemPrompt(base, custom, contract);

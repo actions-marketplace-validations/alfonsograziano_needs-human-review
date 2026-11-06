@@ -94,7 +94,9 @@ Each mode does a little more than the one before. You choose how much to trust i
 
 In `advisory` mode you can make the `ai-risk-scorer` status required in branch protection, so a red verdict blocks the merge button until someone looks.
 
-In `autonomous` mode the action merges with the exact commit it scored. If someone pushed in the meantime, GitHub refuses the merge. The action never uses admin rights. If branch protection blocks the merge (a required review, for example), the PR keeps its `ai-risk:safe` label and the comment says why it could not merge.
+In `autonomous` mode the action merges with the exact commit it scored. If someone pushed in the meantime, GitHub refuses the merge. Right before it acts, the action reads the PR again: if it was closed, turned into a draft, retargeted to another base branch or given the skip label during the review, it does not merge.
+
+A verdict belongs to one commit. When a new commit comes in, the action removes `ai-risk:safe` and marks its comment as out of date before anything else, so a PR never keeps a "safe" verdict for code that was not scored. If you need a merge gate, require the `ai-risk-scorer` commit status, which is tied to the commit. The action never uses admin rights. If branch protection blocks the merge (a required review, for example), the PR keeps its `ai-risk:safe` label and the comment says why it could not merge.
 
 ## What the hard rules check
 
@@ -103,11 +105,15 @@ These run before any model is called, and no AI answer can override them.
 - **CI is green.** Every other check run and commit status on the head commit must have passed. If one is still running, the action waits for it, up to `ci-wait-minutes` (default 10). This matters for checks from GitHub Apps, such as security scanners: when they finish, they do not start a new `workflow_run`, so nothing would wake the scorer again. If a check is still running after the wait, the PR gets a comment saying a human must check it. `required-checks` lists checks that must exist, so a PR cannot look green just because CI never started.
 - **Forks.** PRs from forks always need a human, unless you set `allow-forks: true`.
 - **Skip label.** A PR with the `ai-risk-scorer:skip` label always needs a human.
-- **Self-protection.** A PR that touches `.github/workflows/**`, `.github/actions/**`, `CODEOWNERS`, the prompt files you configured, or anything in `self-protected-paths` always needs a human. This list is built in and cannot be shortened.
+- **Self-protection.** A PR that touches `.github/workflows/**`, `.github/actions/**`, `CODEOWNERS`, any `.gitattributes`, the prompt files you configured, or anything in `self-protected-paths` always needs a human. This list is built in and cannot be shortened.
+- **Special files.** A PR that adds or changes a symlink, a submodule, or a binary file that is not an image, font, PDF or media file needs a human. A symlink could lead the reviewer to files outside the checkout, and the reviewer cannot read the others.
+- **Lock files.** A PR that changes a dependency lock file (`package-lock.json`, `yarn.lock`, `go.sum`, `Cargo.lock` and others, at any depth) needs a human. A lock file can swap where a package is downloaded from, and that is not something to merge unseen.
 - **Protected paths.** A PR that touches any glob in `protected-paths` needs a human. A renamed file counts under its old name too, so moving `payments/charge.ts` out of `payments/` does not get around the rule.
-- **Size (off by default).** Set `max-lines-changed` and `max-files-changed` to send big PRs to a human. Lock files, minified files, snapshots and `dist/` folders are not counted. Add your own with `generated-paths`.
+- **Size (off by default).** Set `max-lines-changed` and `max-files-changed` to send big PRs to a human. Changes to existing generated files (minified files, snapshots, `dist/` folders) are not counted. Add your own with `generated-paths`. A new generated file, or one renamed into a generated path, counts like any other, because the PR picks the names.
 
-Globs work like `.gitignore`: a glob without a slash (`*.tf`, `.env*`) matches the file name in any folder; a glob with a slash (`payments/**`) matches from the repo root.
+Globs work like `.gitignore`: a glob without a slash (`*.tf`, `.env*`, `payments`) matches a file or folder of that name anywhere; a glob with a slash (`payments/**`, `src/payments`) matches from the repo root, and when it names a folder it covers everything inside it.
+
+The action computes diffs with git, but ignores the PR's `.gitattributes`, so a PR cannot mark its code as binary to hide it.
 
 ## How the AI review works
 
@@ -118,7 +124,9 @@ The model never gets the diff pasted into its prompt. The action builds a review
 - `pr.json` with the full list of changed files
 - the slice plan, which says which files this reviewer must cover
 
-The agent runs in [OpenCode](https://github.com/anomalyco/opencode) with every tool denied except `read`, `grep` and `glob`. It has no shell, cannot edit files and cannot reach the web. The repo's own OpenCode config is ignored, so a PR cannot add an `opencode.json` that loosens the rules. The checkout is also made read-only on disk.
+The agent runs in [OpenCode](https://github.com/anomalyco/opencode) with every tool denied except `read`, `grep` and `glob`. It has no shell, cannot edit files and cannot reach the web. The repo's own OpenCode config is ignored, so a PR cannot add an `opencode.json` that loosens the rules. The checkout is also made read-only on disk. The agent process only gets the variables it needs to run and reach the model: no action inputs, no GitHub token, no runner variables. The verdict record keeps which files the agent read, not what the read tool returned.
+
+Every line of a changed file must fit the read tool (2,000 characters). A longer line would be cut off, so a PR with one needs a human. The reviewer's final message must hold exactly one verdict, at the end; an answer that quotes another verdict, or is cut off, is invalid. Text from the model and file names from the PR are escaped in the comment, so they cannot add headings, links, images or @mentions.
 
 The reviewer is told to judge the change inside the code it lands in, not the diff on its own. A function that now returns `null` looks fine in a diff. It is a bug if an untouched function 30 lines below uses the result without a check. So for every changed file the reviewer must:
 
@@ -174,7 +182,7 @@ Either way, the fixed output contract in [`prompts/contract.md`](prompts/contrac
 | `self-protected-paths` | empty | Extra paths for the always-on self-protected list |
 | `max-lines-changed` | `0` (off) | Size limit in changed lines |
 | `max-files-changed` | `0` (off) | Size limit in changed files |
-| `generated-paths` | empty | Extra globs for generated files: not counted, not reviewed |
+| `generated-paths` | empty | Extra globs for generated files: changes to existing ones are not counted for size (they are still reviewed) |
 | `generated-defaults` | `true` | Use the built-in list of generated files |
 | `system-prompt`, `system-prompt-file` | empty | Replace the default prompt |
 | `custom-instructions`, `custom-instructions-file` | empty | Add to the prompt |
