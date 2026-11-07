@@ -32,7 +32,7 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
           persist-credentials: false
-      - uses: alfonsograziano/ai-risk-scorer@main
+      - uses: alfonsograziano/ai-risk-scorer@v1
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         with:

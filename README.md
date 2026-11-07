@@ -67,7 +67,7 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
           persist-credentials: false
-      - uses: alfonsograziano/ai-risk-scorer@main
+      - uses: alfonsograziano/ai-risk-scorer@v1
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         with:
@@ -79,6 +79,8 @@ jobs:
 ```
 
 3. Merge that workflow into your default branch. GitHub only runs `workflow_run` workflows from the default branch, which is the point (see [Security](#security)).
+
+`@v1` follows the latest compatible 1.x release. To stay on one exact version, use a release tag such as `@v1.0.0`, or a full commit SHA. Avoid `@main`: it changes with every commit.
 
 Start in `shadow` mode. The scorer comments on every PR with what it would have done, and changes nothing. Leave it there for a few weeks, compare its verdicts with what your reviewers decided, and only then move up.
 
