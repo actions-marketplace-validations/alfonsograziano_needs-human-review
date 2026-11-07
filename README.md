@@ -241,7 +241,7 @@ The same seven traps, run twice: once locally against a sandbox app, and once as
 
 ### On GitHub
 
-The same seven scenarios ran as real PRs on a private demo repo, in autonomous mode, with OpenCode 2.2.5 and `opencode/deepseek-v4.1-flash` on 2026-11-03. Every one gave the expected answer.
+The same seven scenarios ran as real PRs on the public demo repo, [alfonsograziano/ai-risk-scorer-demo](https://github.com/alfonsograziano/ai-risk-scorer-demo), in autonomous mode, with OpenCode 2.2.5 and `opencode/deepseek-v4.1-flash` on 2026-11-03. Every one gave the expected answer.
 
 | PR | Decision | Risk | Confidence | Stopped at |
 |---|---|---|---|---|
