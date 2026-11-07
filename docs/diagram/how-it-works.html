@@ -3,47 +3,44 @@
   Source of the README diagram. Render it with:
     node scripts/render-diagram.ts
   which writes docs/how-it-works-light.png and docs/how-it-works-dark.png.
-  Style: the Swiss Grid Modernist house kit (paper, ink, one signal red, hairlines).
+  Style: the Swiss Grid Modernist house kit (paper, ink, one signal red).
+  Keep it simple: one short line per box. The details live in the README.
 -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=1200">
-<title>AI Risk Scorer: how a PR is decided</title>
+<title>Needs Human Review: how a PR is answered</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;700&family=Bricolage+Grotesque:opsz,wght@12..96,700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
 <script>
   if (location.hash === "#dark") document.documentElement.dataset.theme = "dark";
 </script>
 <style>
   :root {
     --paper: #f6f6f4;
-    --paper-soft: #ffffff;
-    --paper-sunk: #ececea;
+    --box: #ffffff;
     --ink: #131313;
     --muted: #5a5a58;
-    --rule-soft: rgba(19, 19, 19, 0.14);
-    --rule-strong: rgba(19, 19, 19, 0.32);
+    --line: #131313;
     --accent: #cd2016;
-    --accent-soft: #fbe3e1;
     --bar: #cd2016;
+    --on-bar: #ffffff;
     --on-ink: #f6f6f4;
     --font-display: "Bricolage Grotesque", Helvetica, Arial, sans-serif;
     --font-sans: "Archivo", Helvetica, Arial, sans-serif;
     --font-code: "JetBrains Mono", Menlo, monospace;
   }
   :root[data-theme="dark"] {
-    --paper: #0d1117;            /* GitHub dark canvas, so the image sits flush */
-    --paper-soft: #161b22;
-    --paper-sunk: #0b0e13;
+    --paper: #0d1117;   /* GitHub dark canvas, so the image sits flush */
+    --box: #161b22;
     --ink: #f2f2ef;
     --muted: #a6a6a2;
-    --rule-soft: rgba(242, 242, 239, 0.16);
-    --rule-strong: rgba(242, 242, 239, 0.36);
+    --line: #8b8b88;
     --accent: #ef5a52;
-    --accent-soft: rgba(239, 90, 82, 0.16);
-    --bar: #c8231b;             /* deeper than the dark accent, so white text keeps its contrast */
+    --bar: #c8231b;     /* deeper than the dark accent, so white text keeps its contrast */
+    --on-bar: #ffffff;
     --on-ink: #131313;
   }
 
@@ -51,260 +48,89 @@
   html, body { background: var(--paper); }
   body {
     width: 1200px;
-    padding: 44px 48px 40px;
+    padding: 48px 56px 52px;
     color: var(--ink);
     font-family: var(--font-sans);
-    font-size: 14px;
-    line-height: 1.4;
     -webkit-font-smoothing: antialiased;
   }
 
-  .eyebrow {
-    font-size: 11px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase;
-    color: var(--muted);
-    display: flex; justify-content: space-between; align-items: center;
-    border-top: 2px solid var(--ink); padding-top: 10px;
-  }
-  .eyebrow .key { display: flex; gap: 18px; }
-  .eyebrow .key span { display: inline-flex; align-items: center; gap: 7px; }
-  .sw { width: 10px; height: 10px; display: inline-block; }
-  .sw.red { background: var(--accent); }
-  .sw.ink { background: var(--ink); }
-  .sw.line { border: 1px solid var(--rule-strong); background: var(--paper-soft); }
-
   h1 {
-    font-family: var(--font-display); font-weight: 700; font-size: 38px; line-height: 1.05;
-    letter-spacing: -0.02em; margin: 18px 0 26px;
+    font-family: var(--font-display); font-weight: 700; font-size: 42px; line-height: 1.05;
+    letter-spacing: -0.02em; margin-bottom: 40px;
   }
   h1 .red { color: var(--accent); }
-
-  /* ── Flow ─────────────────────────────── */
-  .flow {
-    display: grid;
-    grid-template-columns: 150px 28px 300px 28px 354px 28px 216px;
-    align-items: stretch;
+  h2 {
+    font-family: var(--font-display); font-weight: 700; font-size: 28px; letter-spacing: -0.01em;
+    margin: 56px 0 20px;
   }
+
+  /* the flow */
+  .flow { display: grid; grid-template-columns: 1fr 34px 1fr 34px 1fr 34px 1fr; align-items: stretch; }
   .box {
-    border: 1px solid var(--rule-strong);
-    background: var(--paper-soft);
-    padding: 14px 16px 14px;
-    display: flex; flex-direction: column;
+    background: var(--box); border: 2px solid var(--line); padding: 22px 22px 24px;
   }
-  .num { font-family: var(--font-code); font-size: 11px; color: var(--muted); letter-spacing: 0.04em; }
-  .box h2 {
-    font-family: var(--font-display); font-weight: 700; font-size: 19px; line-height: 1.1;
-    letter-spacing: -0.01em; margin: 4px 0 4px;
-  }
-  .box .sub { color: var(--muted); font-size: 12.5px; margin-bottom: 10px; }
-  .box .foot {
-    margin-top: auto; padding-top: 10px; border-top: 1px solid var(--rule-soft);
-    font-family: var(--font-code); font-size: 11px; color: var(--muted);
-    display: flex; justify-content: space-between;
-  }
-  .box .foot b { color: var(--ink); font-weight: 500; }
+  .box.ink { background: var(--ink); border-color: var(--ink); color: var(--on-ink); }
+  .box h3 { font-family: var(--font-sans); font-weight: 700; font-size: 25px; line-height: 1.15; margin-bottom: 10px; }
+  .box p { font-size: 18px; line-height: 1.4; color: var(--muted); }
+  .box.ink p { color: var(--on-ink); opacity: 0.8; }
+  .arrow { display: flex; align-items: center; justify-content: center; font-size: 26px; color: var(--ink); }
 
-  .chips { display: flex; flex-wrap: wrap; gap: 5px; }
-  .chip {
-    border: 1px solid var(--rule-strong); padding: 3px 7px; font-size: 12px; font-weight: 500;
-    background: var(--paper);
-  }
-
-  ol.steps { list-style: none; counter-reset: s; display: grid; gap: 6px; }
-  ol.steps li { counter-increment: s; display: grid; grid-template-columns: 18px 1fr; gap: 6px; font-size: 12.5px; }
-  ol.steps li::before {
-    content: counter(s); font-family: var(--font-code); font-size: 10.5px;
-    width: 16px; height: 16px; border: 1px solid var(--ink); display: grid; place-items: center; margin-top: 1px;
-  }
-  ol.steps b { font-weight: 600; }
-
-  .verdict { background: var(--ink); color: var(--on-ink); border-color: var(--ink); }
-  .verdict .num, .verdict .sub { color: color-mix(in srgb, var(--on-ink) 65%, transparent); }
-  .verdict ul { list-style: none; display: grid; gap: 7px; font-size: 13px; }
-  .verdict li { display: flex; gap: 8px; align-items: baseline; }
-  .verdict li::before { content: "✓"; font-weight: 700; }
-  .verdict .stars { letter-spacing: 1px; }
-  .verdict .foot { border-top-color: color-mix(in srgb, var(--on-ink) 25%, transparent); color: color-mix(in srgb, var(--on-ink) 65%, transparent); }
-  .verdict .foot b { color: var(--on-ink); }
-
-  .arrow { display: grid; place-items: center; }
-  .arrow svg { width: 22px; height: 12px; }
-  .arrow path { stroke: var(--ink); stroke-width: 1.5; fill: none; }
-
-  .trigger .big { font-family: var(--font-display); font-weight: 700; font-size: 19px; }
-
-  /* ── Drops to the human bar ───────────── */
-  .drops {
-    display: grid;
-    grid-template-columns: 150px 28px 300px 28px 354px 28px 216px;
-    height: 46px;
-  }
-  .drop { position: relative; display: flex; align-items: center; padding-left: 26px; font-size: 12px; color: var(--accent); font-weight: 600; }
+  /* the human path */
+  .drops { display: grid; grid-template-columns: 1fr 34px 1fr 34px 1fr 34px 1fr; height: 64px; }
+  .drop { position: relative; }
   .drop::before {
-    content: ""; position: absolute; left: 14px; top: 0; bottom: 6px; width: 2px; background: var(--accent);
+    content: ""; position: absolute; left: 32px; top: 0; bottom: 8px; border-left: 2px solid var(--accent);
   }
   .drop::after {
-    content: ""; position: absolute; left: 10px; bottom: 0;
-    border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 7px solid var(--accent);
+    content: ""; position: absolute; left: 26px; bottom: 0;
+    border-left: 7px solid transparent; border-right: 7px solid transparent; border-top: 10px solid var(--accent);
   }
-  .drop.quiet { color: var(--muted); font-weight: 500; padding-left: 0; }
-  .drop.quiet::before, .drop.quiet::after { display: none; }
-  .drop.down { color: var(--muted); font-weight: 500; }
-  .drop.down::before { background: var(--ink); }
-  .drop.down::after { border-top-color: var(--ink); }
-
+  .drop span {
+    position: absolute; left: 48px; top: 20px; font-size: 17px; font-weight: 600; color: var(--accent); white-space: nowrap;
+  }
   .human {
-    display: grid; grid-template-columns: 482px 1fr; align-items: center;
-    background: var(--bar); color: #fff; padding: 12px 16px;
+    background: var(--bar); color: var(--on-bar); padding: 22px 26px;
+    display: flex; align-items: baseline; gap: 22px;
+    margin-right: calc((100% - 102px) / 4 + 34px); /* stops under the AI review box, not under "merges" */
   }
-  .human h3 { font-family: var(--font-display); font-weight: 700; font-size: 21px; letter-spacing: -0.01em; }
-  .human p { font-size: 13px; opacity: 0.95; }
-  .human p b { font-weight: 700; }
+  .human h3 { font-family: var(--font-sans); font-weight: 700; font-size: 25px; white-space: nowrap; }
+  .human p { font-size: 18px; opacity: 0.92; }
 
-  /* ── Modes ────────────────────────────── */
-  .modes-head {
-    margin-top: 26px; display: flex; justify-content: space-between; align-items: baseline;
-    border-top: 1px solid var(--ink); padding-top: 10px;
-  }
-  .modes-head h2 { font-family: var(--font-display); font-weight: 700; font-size: 19px; letter-spacing: -0.01em; }
-  .modes-head h2 .num { margin-right: 8px; }
-  .modes-head .trust { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 8px; }
-  .modes-head .trust svg { width: 120px; height: 10px; }
-  .modes-head .trust path { stroke: var(--muted); stroke-width: 1.2; fill: none; }
-
-  .modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 12px; }
-  .mode { border: 1px solid var(--rule-strong); background: var(--paper-soft); padding: 13px 16px 12px; }
-  .mode header { display: flex; justify-content: space-between; align-items: baseline; }
-  .mode h3 { font-family: var(--font-code); font-weight: 500; font-size: 15px; }
-  .mode .tag { font-size: 10.5px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
-  .mode p { font-size: 12.5px; color: var(--muted); margin: 5px 0 10px; min-height: 35px; }
-  .mode table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-  .mode td { padding: 5px 0; border-top: 1px solid var(--rule-soft); }
-  .mode td:last-child { text-align: right; font-weight: 600; width: 40px; }
-  .mode .no { color: var(--muted); font-weight: 400; }
-  .mode code { font-family: var(--font-code); font-size: 11.5px; }
+  /* the modes */
+  .modes { display: grid; grid-template-columns: 1fr 34px 1fr 34px 1fr; }
+  .mode { border: 2px solid var(--line); background: var(--box); padding: 22px 22px 24px; }
+  .mode code { font-family: var(--font-code); font-weight: 500; font-size: 24px; display: block; margin-bottom: 10px; }
+  .mode p { font-size: 18px; line-height: 1.4; color: var(--muted); }
 </style>
 </head>
 <body>
-
-  <div class="eyebrow">
-    <span>AI Risk Scorer · how every pull request is decided</span>
-    <span class="key">
-      <span><i class="sw line"></i>deterministic code</span>
-      <span><i class="sw ink"></i>can merge</span>
-      <span><i class="sw red"></i>goes to a human</span>
-    </span>
-  </div>
-
-  <h1>Safe PRs merge on their own. <span class="red">Risky ones always reach a human.</span></h1>
+  <h1>Does this PR need a human review?<br><span class="red">Your rules decide, on every PR.</span></h1>
 
   <div class="flow">
-    <div class="box trigger">
-      <span class="num">01</span>
-      <h2>CI is green</h2>
-      <p class="sub">Runs after your CI. Every other check must pass.</p>
-      <p class="sub">Waits for slow ones, like security scanners from GitHub Apps.</p>
-      <div class="foot"><span>trigger</span><b>after CI</b></div>
-    </div>
-
-    <div class="arrow"><svg viewBox="0 0 22 12"><path d="M0 6h20M15 1l5 5-5 5"/></svg></div>
-
-    <div class="box">
-      <span class="num">02</span>
-      <h2>Hard rules</h2>
-      <p class="sub">Fixed code that never reads PR text. No AI answer can override it.</p>
-      <div class="chips">
-        <span class="chip">Fork PR</span>
-        <span class="chip">Skip label</span>
-        <span class="chip">Workflows &amp; CODEOWNERS</span>
-        <span class="chip">Its own prompt files</span>
-        <span class="chip">Protected paths, renames too</span>
-        <span class="chip">Too big</span>
-        <span class="chip">Required checks missing</span>
-      </div>
-      <div class="foot"><span>no model call</span><b>always on</b></div>
-    </div>
-
-    <div class="arrow"><svg viewBox="0 0 22 12"><path d="M0 6h20M15 1l5 5-5 5"/></svg></div>
-
-    <div class="box">
-      <span class="num">03</span>
-      <h2>AI review, read-only</h2>
-      <p class="sub">An agent that can only <code>read</code>, <code>grep</code> and <code>glob</code>. No shell, no web, no edits.</p>
-      <ol class="steps">
-        <li><span><b>Reads in context:</b> the patch, the whole file, and the untouched callers it can break.</span></li>
-        <li><span><b>Scales:</b> big PRs split into slices, plus one cross-slice integrator.</span></li>
-        <li><span><b>Proves it:</b> the tool log must show every changed file was read.</span></li>
-      </ol>
-      <div class="foot"><span>verdict</span><b>strict JSON</b></div>
-    </div>
-
-    <div class="arrow"><svg viewBox="0 0 22 12"><path d="M0 6h20M15 1l5 5-5 5"/></svg></div>
-
-    <div class="box verdict">
-      <span class="num">04</span>
-      <h2>Safe to merge</h2>
-      <p class="sub">Only when all of these hold:</p>
-      <ul>
-        <li>Verdict is "safe"</li>
-        <li>Risk is low</li>
-        <li><span>Confidence <span class="stars">★★★★</span>+</span></li>
-        <li>Every file was read</li>
-      </ul>
-      <div class="foot"><span>then</span><b>apply mode ↓</b></div>
-    </div>
+    <div class="box"><h3>CI is green</h3><p>It runs after your other checks pass.</p></div>
+    <div class="arrow">&rarr;</div>
+    <div class="box"><h3>Your hard rules</h3><p>Protected paths, workflows, forks. Plain code, no AI.</p></div>
+    <div class="arrow">&rarr;</div>
+    <div class="box"><h3>AI review</h3><p>Reads the change and the code it can break, with your prompt.</p></div>
+    <div class="arrow">&rarr;</div>
+    <div class="box ink"><h3>No human review needed</h3><p>Low risk and sure, by your bar. It can merge.</p></div>
   </div>
 
   <div class="drops">
-    <div class="drop quiet">CI red: exits quietly</div>
-    <div></div>
-    <div class="drop">Any rule hits</div>
-    <div></div>
-    <div class="drop">Unsafe · risky · few stars · bad JSON · crash · timeout</div>
-    <div></div>
-    <div></div>
+    <div></div><div></div>
+    <div class="drop"><span>a rule matches</span></div><div></div>
+    <div class="drop"><span>risky, unsure or an error</span></div><div></div><div></div>
   </div>
 
-  <div class="human">
-    <h3>A human must check</h3>
-    <p><b>Fail safe by design.</b> Every error, timeout or unclear answer lands here. Nothing ever merges because something went wrong.</p>
-  </div>
+  <div class="human"><h3>Human review required</h3><p>When in doubt, a person looks. Errors never merge.</p></div>
 
-  <div class="modes-head">
-    <h2><span class="num">05</span>Then it acts by mode, on both outcomes</h2>
-    <span class="trust">start in shadow
-      <svg viewBox="0 0 120 10"><path d="M0 5h117M112 1l5 4-5 4"/></svg>
-      move up once its calls match your reviewers</span>
-  </div>
-
+  <h2>Three modes. Start in shadow.</h2>
   <div class="modes">
-    <div class="mode">
-      <header><h3>shadow</h3><span class="tag">default</span></header>
-      <p>Comments what it would have done. Changes nothing.</p>
-      <table>
-        <tr><td>Sticky PR comment</td><td>✓</td></tr>
-        <tr><td>Label + status check</td><td class="no">–</td></tr>
-        <tr><td>Merges</td><td class="no">–</td></tr>
-      </table>
-    </div>
-    <div class="mode">
-      <header><h3>advisory</h3><span class="tag">gate</span></header>
-      <p>Make the <code>ai-risk-scorer</code> status required, so a red verdict blocks the merge button.</p>
-      <table>
-        <tr><td>Sticky PR comment</td><td>✓</td></tr>
-        <tr><td>Label + status check</td><td>✓</td></tr>
-        <tr><td>Merges</td><td class="no">–</td></tr>
-      </table>
-    </div>
-    <div class="mode">
-      <header><h3>autonomous</h3><span class="tag">hands-off</span></header>
-      <p>Merges safe PRs at the exact commit it scored. No admin rights, no bypass.</p>
-      <table>
-        <tr><td>Sticky PR comment</td><td>✓</td></tr>
-        <tr><td>Label + status check</td><td>✓</td></tr>
-        <tr><td>Merges</td><td>✓</td></tr>
-      </table>
-    </div>
+    <div class="mode"><code>shadow</code><p>Comments with what it would have done. Changes nothing.</p></div>
+    <div class="arrow">&rarr;</div>
+    <div class="mode"><code>advisory</code><p>Labels and a status check give the answer. A human still merges.</p></div>
+    <div class="arrow">&rarr;</div>
+    <div class="mode"><code>autonomous</code><p>Merges the PRs that need no human review.</p></div>
   </div>
-
 </body>
 </html>

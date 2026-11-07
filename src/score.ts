@@ -66,7 +66,7 @@ export async function scorePullRequest(opts: ScoreOptions): Promise<ScoreResult>
   try {
     systemPrompt = await loadSystemPrompt(config, opts.readBaseFile);
   } catch (e) {
-    return stopped('error', humanOnly('The scorer could not load its prompt.', [(e as Error).message]));
+    return stopped('error', humanOnly('The action could not load its prompt.', [(e as Error).message]));
   }
 
   let ws;
@@ -79,7 +79,7 @@ export async function scorePullRequest(opts: ScoreOptions): Promise<ScoreResult>
       pr: { number: opts.pr.number, title: opts.pr.title, author: opts.pr.author, baseRef: opts.pr.baseRef },
     });
   } catch (e) {
-    return stopped('error', humanOnly('The scorer could not prepare the review.', [(e as Error).message]));
+    return stopped('error', humanOnly('The action could not prepare the review.', [(e as Error).message]));
   }
   log(`${ws.reviewFiles.length} files to review in ${ws.slices.length} slice(s), ${ws.generated.length} generated files set aside`);
 
@@ -88,7 +88,7 @@ export async function scorePullRequest(opts: ScoreOptions): Promise<ScoreResult>
     if (opts.lock) await lockWorkspace(opts.repoDir);
     review = await runReview({ ws, harness: opts.harness, systemPrompt, pr: opts.pr, gates: gates.results, config, log });
   } catch (e) {
-    return stopped('error', humanOnly('The scorer failed during the review.', [(e as Error).message]), { slices: ws.slices.length });
+    return stopped('error', humanOnly('The action failed during the review.', [(e as Error).message]), { slices: ws.slices.length });
   } finally {
     if (opts.lock) await unlockWorkspace(opts.repoDir);
   }

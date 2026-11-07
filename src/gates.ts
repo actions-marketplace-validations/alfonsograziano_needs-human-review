@@ -152,7 +152,7 @@ export async function waitForCi(
   return state;
 }
 
-/** G1: every other check on the head SHA must be green. The scorer's own check is ignored. */
+/** G1: every other check on the head SHA must be green. Its own check is ignored. */
 export function ciState(checks: CheckState[], ownNames: string[], required: string[]): CiState {
   const others = checks.filter((c) => !ownNames.includes(c.name));
   const missing = required.filter((r) => !others.some((c) => c.name === r));

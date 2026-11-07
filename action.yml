@@ -1,5 +1,5 @@
-name: AI Risk Scorer
-description: Decides if a pull request can merge on its own, or if a human has to check it. Hard rules first, AI second.
+name: Needs Human Review
+description: Answers one question for every pull request, does it need a human review? Rules you control first, AI second.
 author: Alfonso Graziano
 branding:
   icon: shield
@@ -86,7 +86,7 @@ inputs:
     default: 'false'
   skip-label:
     description: Label that always sends the PR to a human
-    default: ai-risk-scorer:skip
+    default: needs-human-review:always
   merge-method:
     description: squash, merge or rebase
     default: squash
@@ -175,6 +175,6 @@ runs:
       if: always() && steps.score.outputs.record-path != ''
       uses: actions/upload-artifact@v4
       with:
-        name: ai-risk-scorer-verdict-${{ github.run_id }}-${{ github.run_attempt }}
+        name: needs-human-review-verdict-${{ github.run_id }}-${{ github.run_attempt }}
         path: ${{ steps.score.outputs.record-path }}
         if-no-files-found: ignore

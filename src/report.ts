@@ -3,7 +3,7 @@ import { code, inline } from './markdown.ts';
 import type { ScoreResult } from './score.ts';
 import type { Mode } from './types.ts';
 
-export const COMMENT_MARKER = '<!-- ai-risk-scorer -->';
+export const COMMENT_MARKER = '<!-- needs-human-review -->';
 
 /** What the action did with the result. */
 export type Action = 'merged' | 'merge-blocked' | 'labelled' | 'none';
@@ -35,11 +35,11 @@ const GATE_NAMES: Record<string, string> = {
 
 function headline(r: ReportInput): string {
   const safe = r.result.mergeAllowed;
-  if (r.mode === 'shadow') return safe ? '🟢 AI Risk Scorer (shadow mode): I would merge this PR' : '🔴 AI Risk Scorer (shadow mode): I would ask a human to check this PR';
-  if (!safe) return '🔴 AI Risk Scorer: a human must check this PR';
-  if (r.action === 'merged') return '🟢 AI Risk Scorer: merged';
-  if (r.action === 'merge-blocked') return '🟡 AI Risk Scorer: safe, but I could not merge it';
-  return '🟢 AI Risk Scorer: safe to merge';
+  if (r.mode === 'shadow') return safe ? '🟢 No human review needed (shadow mode): I would merge this PR' : '🔴 Human review required (shadow mode): I would ask a human to review this PR';
+  if (!safe) return '🔴 Human review required';
+  if (r.action === 'merged') return '🟢 No human review needed: merged';
+  if (r.action === 'merge-blocked') return '🟡 No human review needed, but I could not merge it';
+  return '🟢 No human review needed: safe to merge';
 }
 
 function gateLine(result: ScoreResult): string {
@@ -55,7 +55,7 @@ export function renderReport(r: ReportInput): string {
   const agg = result.aggregate;
   const lines: string[] = [COMMENT_MARKER, `### ${headline(r)}`, ''];
   lines.push(`**Risk:** ${agg.risk ?? 'n/a'} · **Confidence:** ${stars(agg.confidence)} · **Mode:** ${r.mode} · **Commit:** \`${r.headSha.slice(0, 7)}\``, '');
-  if (r.mode === 'shadow') lines.push('> Shadow mode: no action taken. This is what the scorer would have done.', '');
+  if (r.mode === 'shadow') lines.push('> Shadow mode: no action taken. This is what the action would have done.', '');
   // Everything below that comes from the model or the PR is untrusted text.
   lines.push(inline(agg.summary, 300), '');
 
@@ -65,7 +65,7 @@ export function renderReport(r: ReportInput): string {
   if (!result.mergeAllowed && result.stoppedAt === 'ai') {
     for (const b of result.decision.blockers) if (!agg.reasons.includes(b)) lines.push(`- Rule: ${inline(b)}.`);
   }
-  for (const f of agg.failures) lines.push(`- The scorer could not finish: ${inline(f)}`);
+  for (const f of agg.failures) lines.push(`- The review could not finish: ${inline(f)}`);
   if (r.action === 'merge-blocked' && r.mergeError) lines.push(`- GitHub refused the merge: ${inline(r.mergeError)}`);
   lines.push('');
 

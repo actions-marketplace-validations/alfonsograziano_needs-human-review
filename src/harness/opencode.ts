@@ -4,7 +4,7 @@ import { isAbsolute, relative } from 'node:path';
 import type { FileRead } from '../types.ts';
 import { HarnessError, type Harness, type HarnessInput, type HarnessResult } from './types.ts';
 
-export const AGENT_NAME = 'risk-scorer';
+export const AGENT_NAME = 'human-review';
 
 /**
  * OpenCode config for one read-only reviewer. Every tool is denied, then only

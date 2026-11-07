@@ -44,7 +44,7 @@ test('absolute read paths become relative to the workdir', () => {
 
 test('only read, grep and glob are allowed, after a deny-all rule', () => {
   const cfg = opencodeConfig('SYSTEM', 'opencode/deepseek-v4.1-flash') as { agents: Record<string, { system: string; permissions: { action: string; effect: string }[] }> };
-  const agent = cfg.agents['risk-scorer'];
+  const agent = cfg.agents['human-review'];
   assert.equal(agent?.system, 'SYSTEM');
   assert.deepEqual(agent?.permissions[0], { action: '*', resource: '*', effect: 'deny' });
   const allowed = agent?.permissions.filter((p) => p.effect === 'allow').map((p) => p.action);

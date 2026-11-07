@@ -36,7 +36,7 @@ export interface Config {
 export class ConfigError extends Error {
   readonly problems: string[];
   constructor(problems: string[]) {
-    super(`Bad AI Risk Scorer config:\n- ${problems.join('\n- ')}`);
+    super(`Bad Needs Human Review config:\n- ${problems.join('\n- ')}`);
     this.name = 'ConfigError';
     this.problems = problems;
   }
@@ -127,7 +127,7 @@ export function readConfig(env: Env): Config {
     ciWaitMinutes: int('ci-wait-minutes', 10, 0, 60),
     baseBranches: parseList(raw(env, 'base-branches')),
     allowForks: bool('allow-forks', false),
-    skipLabel: raw(env, 'skip-label') || 'ai-risk-scorer:skip',
+    skipLabel: raw(env, 'skip-label') || 'needs-human-review:always',
     mergeMethod: oneOf('merge-method', ['squash', 'merge', 'rebase'] as const, 'squash'),
     comment: bool('comment', true),
   };

@@ -1,5 +1,5 @@
 {
-  "name": "ai-risk-scorer",
+  "name": "needs-human-review",
   "version": "0.1.0",
   "description": "A GitHub Action that decides if a pull request can merge on its own, or if a human has to check it.",
   "private": true,

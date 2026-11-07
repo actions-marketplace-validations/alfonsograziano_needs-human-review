@@ -51,7 +51,7 @@ export class GitHub {
         authorization: `Bearer ${this.#token}`,
         accept: 'application/vnd.github+json',
         'x-github-api-version': '2022-11-28',
-        'user-agent': 'ai-risk-scorer',
+        'user-agent': 'needs-human-review',
         ...(body === undefined ? {} : { 'content-type': 'application/json' }),
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),

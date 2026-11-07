@@ -24,7 +24,7 @@ export type Context =
  */
 export async function resolveContext(gh: GitHub, eventName: string, event: WorkflowRunEvent, baseBranches: string[]): Promise<Context> {
   if (eventName !== 'workflow_run' || !event.workflow_run) {
-    throw new Error(`AI Risk Scorer only runs on the workflow_run event, got "${eventName}". See the README for why.`);
+    throw new Error(`Needs Human Review only runs on the workflow_run event, got "${eventName}". See the README for why.`);
   }
   const run = event.workflow_run;
   if (run.event !== 'pull_request') return { skip: `the workflow run came from "${run.event}", not a pull request` };

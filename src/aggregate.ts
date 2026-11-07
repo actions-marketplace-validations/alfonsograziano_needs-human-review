@@ -35,7 +35,7 @@ export function aggregate(runs: RunOutcome[]): Aggregate {
   const reasons = reasonSource.flatMap((r) => r.verdict.reasons.map((x) => tag(r.label, x)));
 
   const integrator = good.find((r) => r.label === 'integrator');
-  const summary = (integrator ?? good[0])?.verdict.summary ?? 'The scorer could not finish its review.';
+  const summary = (integrator ?? good[0])?.verdict.summary ?? 'The review could not finish.';
 
   return {
     decision: failures.length === 0 && !anyNo && good.length > 0 ? 'safe' : 'needs_human',

@@ -11,9 +11,9 @@ import { COMMENT_MARKER, renderReport, verdictRecord, type Action, type ReportIn
 import { scorePullRequest } from './score.ts';
 import { baseFileReader } from './workspace.ts';
 
-export const STATUS_CONTEXT = 'ai-risk-scorer';
-export const LABEL_SAFE = 'ai-risk:safe';
-export const LABEL_HUMAN = 'ai-risk:needs-human';
+export const STATUS_CONTEXT = 'human-review';
+export const LABEL_SAFE = 'safe-to-merge';
+export const LABEL_HUMAN = 'needs-human-review';
 
 const env = process.env;
 const log = (line: string) => console.log(line);
@@ -30,7 +30,7 @@ async function summary(markdown: string): Promise<void> {
 
 async function skip(reason: string): Promise<void> {
   log(`Nothing to do: ${reason}.`);
-  await summary(`AI Risk Scorer: nothing to do, ${reason}.`);
+  await summary(`Needs Human Review: nothing to do, ${reason}.`);
   await setOutputs({ decision: 'skipped', 'stopped-at': 'skipped', risk: '', confidence: '', 'verdict-json': '', 'record-path': '' });
 }
 
@@ -52,7 +52,7 @@ async function run(config: Config): Promise<void> {
     await gh.updateComment(
       pr.number,
       COMMENT_MARKER,
-      `${COMMENT_MARKER}\n### ⏳ AI Risk Scorer: commit \`${headSha.slice(0, 7)}\` is not scored yet\n\nThe earlier verdict was for an older commit and no longer applies.`,
+      `${COMMENT_MARKER}\n### ⏳ Needs Human Review: commit \`${headSha.slice(0, 7)}\` is not checked yet\n\nThe earlier verdict was for an older commit and no longer applies.`,
     );
   }
 
@@ -71,7 +71,7 @@ async function run(config: Config): Promise<void> {
       await gh.upsertComment(
         pr.number,
         COMMENT_MARKER,
-        `${COMMENT_MARKER}\n### 🔴 AI Risk Scorer: a human must check this PR\n\nThese checks were still running after ${config.ciWaitMinutes} minutes: ${names}. The scorer only judges PRs whose CI is green, so it did not review this one. Re-run the AI Risk Scorer workflow once they finish.`,
+        `${COMMENT_MARKER}\n### 🔴 Human review required\n\nThese checks were still running after ${config.ciWaitMinutes} minutes: ${names}. Needs Human Review only judges PRs whose CI is green, so it did not review this one. Re-run the Needs Human Review workflow once they finish.`,
       );
     }
     return skip(`CI was still pending after ${config.ciWaitMinutes} minutes (${names})`);
@@ -109,7 +109,7 @@ async function run(config: Config): Promise<void> {
   let mergeError: string | undefined;
   if (config.mode !== 'shadow') {
     await gh.setLabel(pr.number, result.mergeAllowed ? LABEL_SAFE : LABEL_HUMAN, [result.mergeAllowed ? LABEL_HUMAN : LABEL_SAFE]);
-    await gh.setStatus(headSha, result.mergeAllowed ? 'success' : 'failure', STATUS_CONTEXT, result.mergeAllowed ? `Safe to merge (risk ${result.aggregate.risk})` : 'A human must check this PR');
+    await gh.setStatus(headSha, result.mergeAllowed ? 'success' : 'failure', STATUS_CONTEXT, result.mergeAllowed ? `Not needed: safe to merge (risk ${result.aggregate.risk})` : 'Required: a human must review this PR');
     action = 'labelled';
   }
   if (config.mode === 'autonomous' && result.mergeAllowed) {
@@ -127,7 +127,7 @@ async function run(config: Config): Promise<void> {
   if (config.comment) await gh.upsertComment(pr.number, COMMENT_MARKER, markdown);
   await summary(markdown);
 
-  const recordPath = join(env.RUNNER_TEMP ?? repoDir, 'ai-risk-scorer-verdict.json');
+  const recordPath = join(env.RUNNER_TEMP ?? repoDir, 'needs-human-review-verdict.json');
   await writeFile(recordPath, JSON.stringify(verdictRecord(report, config, { number: pr.number, title: pr.title }), null, 2));
   await setOutputs({
     decision: action === 'merged' ? 'merged' : result.mergeAllowed ? 'safe' : 'needs_human',
@@ -147,7 +147,7 @@ async function main(): Promise<void> {
   } catch (e) {
     const message = e instanceof ConfigError ? e.message : String(e);
     console.error(message);
-    await summary(`### 🔴 AI Risk Scorer: bad config\n\n${message}`);
+    await summary(`### 🔴 Needs Human Review: bad config\n\n${message}`);
     process.exitCode = 1;
     return;
   }
@@ -155,8 +155,8 @@ async function main(): Promise<void> {
     await run(config);
   } catch (e) {
     // Never merge on an error. The job fails so the team sees it; no merge has happened.
-    console.error(`AI Risk Scorer failed, so a human must check this PR: ${(e as Error).stack ?? e}`);
-    await summary(`### 🔴 AI Risk Scorer failed\n\nA human must check this PR.\n\n\`\`\`\n${(e as Error).message}\n\`\`\``);
+    console.error(`Needs Human Review failed, so a human must review this PR: ${(e as Error).stack ?? e}`);
+    await summary(`### 🔴 Needs Human Review failed\n\nA human must review this PR.\n\n\`\`\`\n${(e as Error).message}\n\`\`\``);
     process.exitCode = 1;
   }
 }

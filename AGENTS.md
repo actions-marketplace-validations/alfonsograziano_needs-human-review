@@ -1,6 +1,6 @@
 # AGENTS.md
 
-AI Risk Scorer is a GitHub Action that decides if a PR can merge on its own or needs a human. `SPEC.md` is the source of truth for behavior. Read it before changing anything.
+Needs Human Review is a GitHub Action that answers one question for every PR: does it need a human review, or can it merge on its own? `SPEC.md` is the source of truth for behavior. Read it before changing anything.
 
 ## Rules
 

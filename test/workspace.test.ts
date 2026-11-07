@@ -37,7 +37,7 @@ test('prepareWorkspace writes patches, old versions, slices and pr.json', async 
     await repo.write('dist/app.min.js', 'var a=2;\n');
     await repo.write('docs/new.md', 'hello\n');
     const head = await repo.commit('change');
-    await repo.write('.ai-risk-scorer-old/pr.json', '{"left": "over"}\n');
+    await repo.write('.needs-human-review-old/pr.json', '{"left": "over"}\n');
 
     const ws = await prepareWorkspace({ repoDir: repo.dir, baseSha: base, headSha: head, config: testConfig(), pr: { number: 7 } });
     assert.equal(ws.slices.length, 1);
@@ -52,7 +52,7 @@ test('prepareWorkspace writes patches, old versions, slices and pr.json', async 
     const prJson = JSON.parse(await readFile(join(repo.dir, ws.reviewDir, 'pr.json'), 'utf8'));
     assert.equal(prJson.number, 7);
     assert.equal(prJson.files.find((f: { path: string }) => f.path === 'dist/app.min.js').generated, true);
-    await assert.rejects(stat(join(repo.dir, '.ai-risk-scorer-old')), 'a leftover review folder is removed');
+    await assert.rejects(stat(join(repo.dir, '.needs-human-review-old')), 'a leftover review folder is removed');
   } finally {
     await repo.cleanup();
   }
@@ -63,7 +63,7 @@ test('a PR that ships a fake review folder is refused', async () => {
   try {
     await repo.write('a.txt', '1\n');
     const base = await repo.commit('one');
-    await repo.write('.ai-risk-scorer-cafe/pr.json', '{"files": []}\n');
+    await repo.write('.needs-human-review-cafe/pr.json', '{"files": []}\n');
     const head = await repo.commit('plant');
     await assert.rejects(prepareWorkspace({ repoDir: repo.dir, baseSha: base, headSha: head, config: testConfig(), pr: {} }), /shaped like a review folder/);
   } finally {

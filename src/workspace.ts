@@ -9,7 +9,7 @@ import { estimateTokens, makeSlices, type Hunk, type ReviewFile, type Slice } fr
 import type { ChangedFile, FileStatus } from './types.ts';
 
 const run = promisify(execFile);
-const PREFIX = '.ai-risk-scorer-';
+const PREFIX = '.needs-human-review-';
 
 /**
  * Lines longer than this are cut by the reviewer's read tool (OpenCode cuts at

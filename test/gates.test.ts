@@ -17,7 +17,7 @@ test('fork PRs need a human unless allowed', () => {
 });
 
 test('the skip label sends the PR to a human', () => {
-  const r = runHardGates([file('a.ts')], { isFork: false, labels: ['ai-risk-scorer:skip'] }, testConfig());
+  const r = runHardGates([file('a.ts')], { isFork: false, labels: ['needs-human-review:always'] }, testConfig());
   assert.equal(r.stoppedAt, 'skip-label');
 });
 
@@ -25,7 +25,7 @@ test('workflow files and prompt files protect themselves', () => {
   assert.equal(runHardGates([file('.github/workflows/ci.yml')], noFork, testConfig()).stoppedAt, 'self-protected');
   const r = runHardGates([file('.github/scorer.md')], noFork, testConfig(), ['.github/scorer.md']);
   assert.equal(r.stoppedAt, 'self-protected');
-  assert.equal(runHardGates([file('.ai-risk-scorer-cafe/pr.json')], noFork, testConfig()).stoppedAt, 'self-protected');
+  assert.equal(runHardGates([file('.needs-human-review-cafe/pr.json')], noFork, testConfig()).stoppedAt, 'self-protected');
 });
 
 test('protected paths match the old name of a renamed file', () => {

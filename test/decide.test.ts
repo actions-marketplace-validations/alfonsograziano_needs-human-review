@@ -51,15 +51,15 @@ function result(agg: Aggregate, mergeAllowed: boolean): ScoreResult {
 
 test('the report says shadow mode took no action', () => {
   const md = renderReport({ result: result(safe, true), mode: 'shadow', action: 'none', headSha: 'abcdef1234', model: 'm' });
-  assert.ok(md.startsWith('<!-- ai-risk-scorer -->'));
-  assert.ok(md.includes('I would merge this PR'));
+  assert.ok(md.startsWith('<!-- needs-human-review -->'));
+  assert.ok(md.includes('### 🟢 No human review needed (shadow mode): I would merge this PR'));
   assert.ok(md.includes('no action taken'));
   assert.ok(md.includes('★★★★★ 5/5'));
 });
 
 test('the report explains a blocked merge', () => {
   const md = renderReport({ result: result(safe, true), mode: 'autonomous', action: 'merge-blocked', mergeError: 'review required', headSha: 'abc', model: 'm' });
-  assert.ok(md.includes('safe, but I could not merge it'));
+  assert.ok(md.includes('### 🟡 No human review needed, but I could not merge it'));
   assert.ok(md.includes('review required'));
 });
 

@@ -14,7 +14,7 @@ test('custom instructions come after the system prompt, and the contract is alwa
 
 test('the default prompt is used when nothing is set', async () => {
   const p = await loadSystemPrompt(testConfig(), async () => '');
-  assert.ok(p.startsWith('You are the AI Risk Scorer.'));
+  assert.ok(p.startsWith('You are Needs Human Review.'));
   assert.ok(p.includes('## Output contract'));
   assert.ok(!p.includes('Repository-specific'));
 });
@@ -22,7 +22,7 @@ test('the default prompt is used when nothing is set', async () => {
 test('system-prompt replaces the default but keeps the contract', async () => {
   const p = await loadSystemPrompt(testConfig({ systemPrompt: 'Only judge SQL.', customInstructions: 'Be strict.' }), async () => '');
   assert.ok(p.startsWith('Only judge SQL.'));
-  assert.ok(!p.includes('You are the AI Risk Scorer.'));
+  assert.ok(!p.includes('You are Needs Human Review.'));
   assert.ok(p.includes('Be strict.'));
   assert.ok(p.includes('## Output contract'));
 });

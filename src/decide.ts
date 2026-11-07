@@ -12,7 +12,7 @@ export interface Decision {
 /** A merge needs "safe", risk at or below the limit, enough stars, and no failed run. */
 export function decide(agg: Aggregate, config: Pick<Config, 'maxRiskToMerge' | 'minConfidence'>): Decision {
   const blockers: string[] = [];
-  if (agg.failures.length > 0) blockers.push('the scorer could not finish every review');
+  if (agg.failures.length > 0) blockers.push('the AI review did not finish');
   if (agg.decision !== 'safe') blockers.push('a reviewer said a human must check');
   if (agg.risk === null) blockers.push('no valid verdict');
   else if (RISK_ORDER[agg.risk] > RISK_ORDER[config.maxRiskToMerge]) blockers.push(`risk ${agg.risk} is above the limit (${config.maxRiskToMerge})`);

@@ -1,16 +1,30 @@
-# AI Risk Scorer
+# Needs Human Review
 
-**Let safe pull requests merge themselves. Send the risky ones to a person, every time.**
+**Does this pull request need a human review? A GitHub Action that answers for every PR, by rules you control.**
 
 ![GitHub Action](https://img.shields.io/badge/GitHub-Action-131313?logo=github&logoColor=white) ![Node 24](https://img.shields.io/badge/Node-24-131313?logo=node.js&logoColor=white) ![Zero runtime dependencies](https://img.shields.io/badge/runtime%20deps-0-cd2016)
 
 Your coding agents open pull requests faster than your team can review them. Most are small: a typo, a new test, a config tweak. They still wait a day for a reviewer. A few touch payments, auth, or a function that three other files depend on, and those get the same tired glance as the rest.
 
-AI Risk Scorer is a GitHub Action that runs when your CI goes green and puts every PR in one of two piles: **merge it**, or **a human must check it**.
+So every PR raises the same question: **does a human need to review this one?** Needs Human Review answers it as soon as your CI goes green. The answer is always one of two:
+
+- **No human review needed.** No rule of yours stops the PR, the AI review read every changed file and the code it can reach, and it found the change low risk. The PR can merge without waiting for anyone.
+- **Human review required.** A rule matched, or the review found risk, or it was unsure, or something broke. A person looks before it merges, and the PR comment says why.
+
+## You stay in control
+
+This is not a bot that merges whatever it likes. It is a system you configure, and every part of the answer follows rules you set:
+
+- **What always needs a human.** Protected paths, size limits, forks and lock files are checked by plain code before any AI runs. Any teammate can add the `needs-human-review:always` label to send a PR to a person, no questions asked.
+- **How the AI judges.** The review prompt is a file. Add your own rules ("anything in `src/billing/` is high risk") or replace it completely.
+- **How high the bar is.** You set the highest risk that may merge and the fewest confidence stars it needs.
+- **What happens with the answer.** Shadow mode only comments. Advisory adds a label and a status check, and a person still merges. Autonomous merges the PRs that need no human review. You move up when its answers match your reviewers', and back down whenever you want.
+
+When in doubt, the answer is "human review required". A crash, a timeout or an unclear answer never ends in a merge.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/how-it-works-dark.png">
-  <img alt="How AI Risk Scorer decides a PR. 01 CI is green. 02 Hard rules: fixed code that never reads PR text checks forks, the skip label, workflow and CODEOWNERS files, its own prompt files, protected paths, size and required checks. 03 AI review, read-only: the agent reads the patch, the whole file and the callers it can break, splits big PRs into slices, and must prove it read every file. 04 Safe to merge only when the verdict is safe, risk is low, confidence is at least four stars and every file was read. Any rule hit, unsafe verdict, bad answer, crash or timeout goes to: a human must check. 05 Then it acts by mode: shadow only comments, advisory adds a label and a status check, autonomous also merges." src="docs/how-it-works-light.png">
+  <img alt="Does this PR need a human review? Your rules decide, on every PR. CI is green, then your hard rules (protected paths, workflows, forks; plain code, no AI), then an AI review that reads the change and the code it can break, with your prompt. No human review needed only when it is low risk and sure by your bar; then it can merge. If a rule matches, or the review is risky, unsure or fails: human review required. When in doubt, a person looks, and errors never merge. Three modes, start in shadow: shadow comments with what it would have done and changes nothing, advisory gives the answer as labels and a status check while a human still merges, autonomous merges the PRs that need no human review." src="docs/how-it-works-light.png">
 </picture>
 
 ## Why you can trust it with your main branch
@@ -19,7 +33,6 @@ AI Risk Scorer is a GitHub Action that runs when your CI goes green and puts eve
 - **It reviews like a person, not like a diff viewer.** The agent opens the whole file and the untouched code the change can reach. A function that now returns `null` looks fine in a diff. It is a bug if a caller 30 lines below does not check for it.
 - **It has to prove it read the code.** The action checks the agent's tool log. A changed file the agent never opened makes the verdict invalid.
 - **It fails safe.** A crash, a timeout, a malformed answer or low confidence all end with a human. Nothing merges because something broke.
-- **You turn it up slowly.** Start in shadow mode, where it only comments. Move to advisory, then autonomous, once its calls match your reviewers'.
 - **You cap the spend.** PRs stopped by a hard rule never call a model, and `max-slices` limits how many reviewer runs one big PR can start.
 
 ## Proof, not promises
@@ -35,10 +48,10 @@ Seven scenarios is a smoke test, not a benchmark. It shows the whole pipeline wo
 Three steps. Nothing on your repo changes until you pick a mode that acts.
 
 1. Add an OpenCode API key to the repo as a secret named `OPENCODE_API_KEY` (Settings, then Secrets and variables, then Actions).
-2. Add this workflow as `.github/workflows/ai-risk-scorer.yml`. Change `workflows: [CI]` to the name of your CI workflow.
+2. Add this workflow as `.github/workflows/needs-human-review.yml`. Change `workflows: [CI]` to the name of your CI workflow.
 
 ```yaml
-name: AI Risk Scorer
+name: Needs Human Review
 on:
   workflow_run:
     workflows: [CI]
@@ -53,11 +66,11 @@ permissions:
   actions: read
 
 concurrency:
-  group: ai-risk-scorer-${{ github.event.workflow_run.head_sha }}
+  group: needs-human-review-${{ github.event.workflow_run.head_sha }}
   cancel-in-progress: false
 
 jobs:
-  score:
+  review:
     if: github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -67,7 +80,7 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
           persist-credentials: false
-      - uses: alfonsograziano/ai-risk-scorer@v1
+      - uses: alfonsograziano/needs-human-review@v1
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         with:
@@ -82,7 +95,7 @@ jobs:
 
 `@v1` follows the latest compatible 1.x release. To stay on one exact version, use a release tag such as `@v1.0.0`, or a full commit SHA. Avoid `@main`: it changes with every commit.
 
-Start in `shadow` mode. The scorer comments on every PR with what it would have done, and changes nothing. Leave it there for a few weeks, compare its verdicts with what your reviewers decided, and only then move up.
+Start in `shadow` mode. The action comments on every PR with its answer and what it would have done, and changes nothing. Leave it there for a few weeks, compare its verdicts with what your reviewers decided, and only then move up.
 
 ## The three modes
 
@@ -91,22 +104,24 @@ Each mode does a little more than the one before. You choose how much to trust i
 | Mode | PR comment | Label and status check | Merges |
 |---|---|---|---|
 | `shadow` (default) | yes, marked "no action taken" | no | never |
-| `advisory` | yes | `ai-risk:safe` or `ai-risk:needs-human`, and a commit status named `ai-risk-scorer` | never |
-| `autonomous` | yes | yes | yes, when every rule allows it |
+| `advisory` | yes | `needs-human-review` or `safe-to-merge`, and a commit status named `human-review` | never |
+| `autonomous` | yes | yes | yes, when no human review is needed |
 
-In `advisory` mode you can make the `ai-risk-scorer` status required in branch protection, so a red verdict blocks the merge button until someone looks.
+The PR comment leads with the answer: **🔴 Human review required** or **🟢 No human review needed: safe to merge** (or **merged**, in autonomous mode), followed by the reasons. The `needs-human-review` label is only there when a person has to act, so you can filter your review queue by it. The `human-review` status reads "Required" (failure) or "Not needed" (success).
 
-In `autonomous` mode the action merges with the exact commit it scored. If someone pushed in the meantime, GitHub refuses the merge. Right before it acts, the action reads the PR again: if it was closed, turned into a draft, retargeted to another base branch or given the skip label during the review, it does not merge.
+In `advisory` mode you can make the `human-review` status required in branch protection, so a red verdict blocks the merge button until someone looks.
 
-A verdict belongs to one commit. When a new commit comes in, the action removes `ai-risk:safe` and marks its comment as out of date before anything else, so a PR never keeps a "safe" verdict for code that was not scored. If you need a merge gate, require the `ai-risk-scorer` commit status, which is tied to the commit. The action never uses admin rights. If branch protection blocks the merge (a required review, for example), the PR keeps its `ai-risk:safe` label and the comment says why it could not merge.
+In `autonomous` mode the action merges with the exact commit it reviewed. If someone pushed in the meantime, GitHub refuses the merge. Right before it acts, the action reads the PR again: if it was closed, turned into a draft, retargeted to another base branch or given the skip label during the review, it does not merge.
+
+A verdict belongs to one commit. When a new commit comes in, the action removes `safe-to-merge` and marks its comment as out of date before anything else, so a PR never keeps a "safe" verdict for code that was not reviewed. If you need a merge gate, require the `human-review` commit status, which is tied to the commit. The action never uses admin rights. If branch protection blocks the merge (a required review, for example), the PR keeps its `safe-to-merge` label and the comment says why it could not merge.
 
 ## What the hard rules check
 
 These run before any model is called, and no AI answer can override them.
 
-- **CI is green.** Every other check run and commit status on the head commit must have passed. If one is still running, the action waits for it, up to `ci-wait-minutes` (default 10). This matters for checks from GitHub Apps, such as security scanners: when they finish, they do not start a new `workflow_run`, so nothing would wake the scorer again. If a check is still running after the wait, the PR gets a comment saying a human must check it. `required-checks` lists checks that must exist, so a PR cannot look green just because CI never started.
+- **CI is green.** Every other check run and commit status on the head commit must have passed. If one is still running, the action waits for it, up to `ci-wait-minutes` (default 10). This matters for checks from GitHub Apps, such as security scanners: when they finish, they do not start a new `workflow_run`, so nothing would wake the action again. If a check is still running after the wait, the PR gets a comment saying human review is required. `required-checks` lists checks that must exist, so a PR cannot look green just because CI never started.
 - **Forks.** PRs from forks always need a human, unless you set `allow-forks: true`.
-- **Skip label.** A PR with the `ai-risk-scorer:skip` label always needs a human.
+- **Skip label.** A PR with the `needs-human-review:always` label always needs a human.
 - **Self-protection.** A PR that touches `.github/workflows/**`, `.github/actions/**`, `CODEOWNERS`, any `.gitattributes`, the prompt files you configured, or anything in `self-protected-paths` always needs a human. This list is built in and cannot be shortened.
 - **Special files.** A PR that adds or changes a symlink, a submodule, or a binary file that is not an image, font, PDF or media file needs a human. A symlink could lead the reviewer to files outside the checkout, and the reviewer cannot read the others.
 - **Lock files.** A PR that changes a dependency lock file (`package-lock.json`, `yarn.lock`, `go.sum`, `Cargo.lock` and others, at any depth) needs a human. A lock file can swap where a package is downloaded from, and that is not something to merge unseen.
@@ -151,7 +166,7 @@ The results are added up in code. One "needs a human" from any slice is enough. 
 
 ### Confidence is stars
 
-LLMs are poor at stating their own confidence as a number. [Xiong et al. (ICLR 2024)](https://arxiv.org/abs/2306.13063) found that the numbers they give bunch up between 80% and 100%, right or wrong. So the scorer asks for 1 to 5 stars, and each level describes what the reviewer did, not how it feels:
+LLMs are poor at stating their own confidence as a number. [Xiong et al. (ICLR 2024)](https://arxiv.org/abs/2306.13063) found that the numbers they give bunch up between 80% and 100%, right or wrong. So the reviewer gives 1 to 5 stars, and each level describes what the reviewer did, not how it feels:
 
 | Stars | Meaning |
 |---|---|
@@ -199,7 +214,7 @@ Either way, the fixed output contract in [`prompts/contract.md`](prompts/contrac
 | `ci-wait-minutes` | `10` | How long to wait for checks still running, such as GitHub App checks |
 | `base-branches` | default branch | Base branches to act on |
 | `allow-forks` | `false` | Let fork PRs reach the AI step |
-| `skip-label` | `ai-risk-scorer:skip` | Label that always sends the PR to a human |
+| `skip-label` | `needs-human-review:always` | Label that always sends the PR to a human |
 | `merge-method` | `squash` | `squash`, `merge` or `rebase` |
 | `comment` | `true` | Post the sticky PR comment |
 
@@ -229,7 +244,7 @@ The same seven traps, run twice: once locally against a sandbox app, and once as
 
 ### Local eval
 
-`scripts/eval-sandbox.ts` builds a small demo app and runs one PR per scenario through the full scorer. Results with `opencode/deepseek-v4.1-flash`, from [`eval/results.md`](eval/results.md):
+`scripts/eval-sandbox.ts` builds a small demo app and runs one PR per scenario through the full action. Results with `opencode/deepseek-v4.1-flash`, from [`eval/results.md`](eval/results.md):
 
 | Scenario | Expected | Got | Decided by |
 |---|---|---|---|
@@ -243,7 +258,7 @@ The same seven traps, run twice: once locally against a sandbox app, and once as
 
 ### On GitHub
 
-The same seven scenarios ran as real PRs on the public demo repo, [alfonsograziano/ai-risk-scorer-demo](https://github.com/alfonsograziano/ai-risk-scorer-demo), in autonomous mode, with OpenCode 2.2.5 and `opencode/deepseek-v4.1-flash` on 2026-11-03. Every one gave the expected answer.
+The same seven scenarios ran as real PRs on the public demo repo, [alfonsograziano/needs-human-review-demo](https://github.com/alfonsograziano/needs-human-review-demo), in autonomous mode, with OpenCode 2.2.5 and `opencode/deepseek-v4.1-flash` on 2026-11-03. Every one gave the expected answer.
 
 | PR | Decision | Risk | Confidence | Stopped at |
 |---|---|---|---|---|
@@ -255,13 +270,13 @@ The same seven scenarios ran as real PRs on the public demo repo, [alfonsograzia
 | Touches `src/payments/**` | needs a human | | | protected path |
 | Edits a workflow file | needs a human | | | self-protection |
 
-The `findUser` review named both untouched callers, `greeting()` and `deleteAccount()`, with their line numbers. The admin-check review called the note in the PR body an injection attempt and ignored it. The two safe PRs were merged by the action with the scored commit SHA.
+The `findUser` review named both untouched callers, `greeting()` and `deleteAccount()`, with their line numbers. The admin-check review called the note in the PR body an injection attempt and ignored it. The two safe PRs were merged by the action with the reviewed commit SHA.
 
 Seven scenarios is a smoke test, not a benchmark. It shows the pipeline works end to end and catches the traps it was built for. It says nothing about how often the model is wrong on real PRs. Shadow mode on a real repo is how you find that out.
 
 ## Run it locally
 
-You can score any branch of a local repo without GitHub. The review runs in a temporary git worktree, so your checkout is never touched. It uses your local OpenCode login.
+You can check any branch of a local repo without GitHub. The review runs in a temporary git worktree, so your checkout is never touched. It uses your local OpenCode login.
 
 ```bash
 node scripts/local-review.ts --repo ../my-app --base main --head my-branch --protected 'src/payments/**'

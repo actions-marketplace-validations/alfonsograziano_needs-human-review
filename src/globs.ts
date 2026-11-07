@@ -8,7 +8,7 @@ export const SELF_PROTECTED_PATHS: readonly string[] = [
   '.github/CODEOWNERS',
   'docs/CODEOWNERS',
   // A PR that ships something shaped like our review folder is trying to fool the reviewer.
-  '.ai-risk-scorer-*/**',
+  '.needs-human-review-*/**',
   // Attributes change how git diffs a file: binary, -diff, textconv. The action
   // ignores the PR's attributes, and a PR that edits them needs a human.
   '.gitattributes',

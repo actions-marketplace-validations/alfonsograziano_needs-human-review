@@ -1,9 +1,9 @@
-# .github/workflows/ai-risk-scorer.yml
+# .github/workflows/needs-human-review.yml
 #
 # Runs after your CI workflow finishes. GitHub runs this file from the
 # default branch, never from the PR, so a PR cannot change the rules it is
 # judged by.
-name: AI Risk Scorer
+name: Needs Human Review
 on:
   workflow_run:
     workflows: [CI] # the name of every workflow that must be green
@@ -13,16 +13,16 @@ permissions:
   contents: write # merge (autonomous mode only; read is enough for shadow)
   pull-requests: write # comment, labels
   issues: write # labels are issue labels
-  statuses: write # the ai-risk-scorer status (advisory, autonomous)
+  statuses: write # the human-review status (advisory, autonomous)
   checks: read # is CI green?
   actions: read # read the workflow run
 
 concurrency:
-  group: ai-risk-scorer-${{ github.event.workflow_run.head_sha }}
+  group: needs-human-review-${{ github.event.workflow_run.head_sha }}
   cancel-in-progress: false
 
 jobs:
-  score:
+  review:
     if: github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -32,7 +32,7 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
           persist-credentials: false
-      - uses: alfonsograziano/ai-risk-scorer@v1
+      - uses: alfonsograziano/needs-human-review@v1
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         with:

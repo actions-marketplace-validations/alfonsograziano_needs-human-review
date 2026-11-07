@@ -108,7 +108,7 @@ export function formatDate(d: Date): string {
 
 const README = `# Sandbox shop
 
-A tiny demo app used to test the AI Risk Scorer. It has users, an admin action and card charges.
+A tiny demo app used to test Needs Human Review. It has users, an admin action and card charges.
 
 Run the tets with \`node --test\`.
 `;
@@ -246,7 +246,7 @@ export async function makeSandbox(dir: string, extraBaseFiles: Record<string, st
 
 /** The scorer workflow for the GitHub demo repo. */
 export function scorerWorkflow(mode: string, ref: string): string {
-  return `name: AI Risk Scorer
+  return `name: Needs Human Review
 on:
   workflow_run:
     workflows: [CI]
@@ -261,11 +261,11 @@ permissions:
   actions: read
 
 concurrency:
-  group: ai-risk-scorer-\${{ github.event.workflow_run.head_sha }}
+  group: needs-human-review-\${{ github.event.workflow_run.head_sha }}
   cancel-in-progress: false
 
 jobs:
-  score:
+  review:
     if: github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -275,7 +275,7 @@ jobs:
           ref: \${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
           persist-credentials: false
-      - uses: alfonsograziano/ai-risk-scorer@${ref}
+      - uses: alfonsograziano/needs-human-review@${ref}
         env:
           OPENCODE_API_KEY: \${{ secrets.OPENCODE_API_KEY }}
         with:
@@ -294,6 +294,6 @@ if (import.meta.main) {
   }
   const out = resolve(values.out);
   const mode = values['scorer-mode'];
-  await makeSandbox(out, mode ? { '.github/workflows/ai-risk-scorer.yml': scorerWorkflow(mode, values['scorer-ref']) } : {});
+  await makeSandbox(out, mode ? { '.github/workflows/needs-human-review.yml': scorerWorkflow(mode, values['scorer-ref']) } : {});
   console.log(`Sandbox ready at ${out} with ${SCENARIOS.length} branches: ${SCENARIOS.map((s) => s.branch).join(', ')}`);
 }
