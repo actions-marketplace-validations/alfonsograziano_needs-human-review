@@ -35,10 +35,23 @@ jobs:
           # Fork PRs need this since checkout v7. The action reads the files, never runs them.
           allow-unsafe-pr-checkout: true
       - uses: alfonsograziano/needs-human-review@v1
-        env:
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         with:
           mode: shadow
+          # The model key, whatever the harness: here an Anthropic key.
+          # The harness passes it to the agent in the variable it reads.
+          api-key: ${{ secrets.API_KEY }}
+          # The coding agent that runs the review, the model, and the other
+          # harness settings. Leave any of them out to get the harness's default.
+          harness: claude-code # the default; or codex, opencode
+          model: claude-sonnet-5-5
+          harness-settings: |
+            version: 2.1.319
+            effort: high
+          # With an OpenCode key instead, reach models through OpenCode's
+          # endpoint. The model can be any one your OpenCode workspace has on:
+          # model: glm-5.3
+          # harness-settings: |
+          #   base-url: https://opencode.ai/inference/anthropic
           protected-paths: |
             src/payments/**
             **/migrations/**

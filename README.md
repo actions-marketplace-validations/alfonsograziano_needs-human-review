@@ -47,7 +47,7 @@ Seven scenarios is a smoke test, not a benchmark. It shows the whole pipeline wo
 
 Three steps. Nothing on your repo changes until you pick a mode that acts.
 
-1. Add an OpenCode API key to the repo as a secret named `OPENCODE_API_KEY` (Settings, then Secrets and variables, then Actions).
+1. Add an [Anthropic API key](https://console.anthropic.com/) to the repo as a secret named `API_KEY` (Settings, then Secrets and variables, then Actions). The review runs in [Claude Code](https://github.com/anthropics/claude-code) by default. The secret has the same name whatever the provider: the action passes the key to the agent in the variable that agent reads, so you can switch to Codex with an OpenAI key, OpenCode with an OpenCode key, or a gateway, without renaming anything (see [Choosing the harness](#choosing-the-harness)).
 2. Add this workflow as `.github/workflows/needs-human-review.yml`. Change `workflows: [CI]` to the name of your CI workflow.
 
 ```yaml
@@ -83,15 +83,31 @@ jobs:
           # Fork PRs need this since checkout v7. The action reads the files, never runs them.
           allow-unsafe-pr-checkout: true
       - uses: alfonsograziano/needs-human-review@v1
-        env:
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         with:
           mode: shadow
+          # Claude Code with claude-sonnet-5-5, unless you set harness and model.
+          api-key: ${{ secrets.API_KEY }}
           protected-paths: |
             src/payments/**
             **/migrations/**
             *.tf
 ```
+
+No Anthropic key? Claude Code can reach models through a gateway instead. With an [OpenCode](https://opencode.ai) key in `API_KEY`, swap the action step for this one:
+
+```yaml
+      - uses: alfonsograziano/needs-human-review@v1
+        with:
+          mode: shadow
+          model: glm-5.3
+          api-key: ${{ secrets.API_KEY }}
+          harness-settings: |
+            base-url: https://opencode.ai/inference/anthropic
+          protected-paths: |
+            src/payments/**
+```
+
+Through OpenCode's endpoint, `model` can be any model your OpenCode workspace has turned on, Claude or not (for example `deepseek-v4.1-flash`); a model the workspace has turned off fails with `403 Model access is disabled`, and the PR goes to a human. Not every model behind that endpoint works with Claude Code: on 2026-11-09, `glm-5.3` gave the expected answer on both demo PRs; `deepseek-v4.1-flash` and `minimax-m3` rejected Claude Code's requests; and `kimi-k3` looped on reads and never answered on one PR. A failure always ends in "needs a human", never a merge.
 
 3. Merge that workflow into your default branch. GitHub only runs `workflow_run` workflows from the default branch, which is the point (see [Security](#security)).
 
@@ -143,7 +159,7 @@ The model never gets the diff pasted into its prompt. The action builds a review
 - `pr.json` with the full list of changed files
 - the slice plan, which says which files this reviewer must cover
 
-The agent runs in [OpenCode](https://github.com/anomalyco/opencode) with every tool denied except `read`, `grep` and `glob`. It has no shell, cannot edit files and cannot reach the web. The repo's own OpenCode config is ignored, so a PR cannot add an `opencode.json` that loosens the rules. The checkout is also made read-only on disk. The agent process only gets the variables it needs to run and reach the model: no action inputs, no GitHub token, no runner variables. The verdict record keeps which files the agent read, not what the read tool returned.
+With [Claude Code](https://github.com/anthropics/claude-code), the default, the agent runs in `--restricted` mode with only `Read`, `Grep` and `Glob`, file access kept inside the checkout, and no MCP servers or skills. The repo's `.claude/` settings, hooks and `CLAUDE.md` are not loaded. With [OpenCode](https://github.com/anomalyco/opencode), the agent runs with every tool denied except `read`, `grep` and `glob`. The repo's own OpenCode config is ignored, so a PR cannot add an `opencode.json` that loosens the rules. [Codex](https://github.com/openai/codex) has no read-only file tool of its own, only a shell, so the action turns the shell off and gives Codex its own `read`, `grep` and `glob`, served by a small MCP server in this repo that refuses any path outside the checkout. Those reads are the proof of reading, recorded by the action's code rather than parsed from shell commands. The repo's `AGENTS.md` and `.codex/` config are not loaded, and web search, plugins, hooks, skills and sub-agents are off. Whatever the harness, the agent has no shell, cannot edit files and cannot reach the web. The checkout is also made read-only on disk. The agent process only gets the variables it needs to run and reach the model: no action inputs, no GitHub token, no runner variables. The verdict record keeps which files the agent read, not what the read tool returned.
 
 Every line of a changed file must fit the read tool (2,000 characters). A longer line would be cut off, so a PR with one needs a human. The reviewer's final message must hold exactly one verdict, at the end; an answer that quotes another verdict, or is cut off, is invalid. Text from the model and file names from the PR are escaped in the comment, so they cannot add headings, links, images or @mentions.
 
@@ -156,7 +172,7 @@ The reviewer is told to judge the change inside the code it lands in, not the di
 
 Then the action checks the work with code, not trust:
 
-- **Proof of reading.** OpenCode logs every tool call. The action checks the log and confirms that every changed file was read in full. A file the agent never opened makes the verdict invalid.
+- **Proof of reading.** The agent's tool-call log shows every file it opened and which lines it got back. The action checks the log and confirms that every changed file was read in full. A file the agent never opened makes the verdict invalid.
 - **Strict verdict.** The answer must be one JSON object with fixed fields. Missing fields, extra fields, a percentage instead of stars, or "safe" with high risk all make it invalid.
 - **No empty impact pass.** "Safe" on a change to code that runs, with nothing in `affected_code`, is invalid.
 
@@ -189,13 +205,140 @@ The default prompt is in [`prompts/system.md`](prompts/system.md). You have two 
 
 Either way, the fixed output contract in [`prompts/contract.md`](prompts/contract.md) is always added last, so the action can read the answer. Prompt files are read from the base branch, never from the PR, and a PR that edits them always needs a human.
 
+## Choosing the harness
+
+The review runs inside a coding agent, the harness. `harness` picks which one, `model` picks the model, in that harness's format, and `harness-settings` holds the other settings that depend on the harness, one `key: value` per line. Leave out any key to get the default.
+
+| Setting | `claude-code` (default) | `codex` | `opencode` |
+|---|---|---|---|
+| `model` (input or setting) | `claude-sonnet-5-5`, or any model name or alias Claude Code takes | `gpt-6.1-sol`, or any model the endpoint serves | `opencode/deepseek-v4.1-flash`, in `provider/model` format |
+| `version` | `2.1.319`, the Claude Code release to install from npm | `0.167.0`, the Codex release to install from npm | `2.2.5`, the OpenCode release to install |
+| `effort` | `low`, `medium`, `high`, `xhigh` or `max`. Empty uses the model's default | `minimal`, `low`, `medium`, `high` or `xhigh`. Empty uses the model's default | n/a |
+| `provider` | Where the model runs: `anthropic` (default), `bedrock`, `vertex` or `foundry`. See [Signing in](#signing-in) | n/a | n/a, the provider is part of `model` |
+| `base-url` | An endpoint for the provider: a gateway in front of Anthropic's API, or your Bedrock, Vertex AI or Foundry endpoint | An OpenAI Responses API endpoint: Azure OpenAI or a gateway. Empty is OpenAI's API | n/a (not supported yet) |
+| `auth` | How `api-key` is sent to Anthropic's API: `x-api-key`, `bearer` (gateways) or `oauth` (a Claude subscription token). Empty means `x-api-key`, or `bearer` once `base-url` is set | n/a, always a bearer token | n/a |
+| `region` | `bedrock` and `vertex` only: the cloud region. Empty uses the job env | n/a | n/a |
+| `project` | `vertex` only: the Google Cloud project. Empty uses the job env | n/a | n/a |
+| `api-key` goes in | `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` or `CLAUDE_CODE_OAUTH_TOKEN` per `auth`; `AWS_BEARER_TOKEN_BEDROCK` on Bedrock; `ANTHROPIC_FOUNDRY_API_KEY` on Foundry | `OPENAI_API_KEY` | the provider's variable: `OPENCODE_API_KEY` for `opencode/...`, `ANTHROPIC_API_KEY` for `anthropic/...`, `AWS_BEARER_TOKEN_BEDROCK` for `amazon-bedrock/...` |
+
+```yaml
+        with:
+          harness: claude-code
+          model: claude-opus-5-5
+          harness-settings: |
+            effort: high
+            version: 2.1.319
+```
+
+The key has its own input, `api-key`, the same for every harness, so you can switch harness without renaming secrets. It is not a setting because settings are kept in the verdict record and a key must not be. The harness passes it to the agent in the variable that agent reads. Leave `api-key` empty when a cloud sign-in step provides the credentials instead.
+
+`base-url` is what lets one key work across harnesses. An OpenCode Console key reaches Claude models through `https://opencode.ai/inference/anthropic` (or `https://opencode.ai/inference/go/anthropic` with OpenCode Go), and Codex through `https://opencode.ai/inference/openai/v1`. A LiteLLM or company gateway works the same way. Codex only speaks OpenAI's Responses API, so its endpoint must serve that.
+
+A key the harness does not know, or a bad value, fails the job before anything is installed, so a typo never falls back to a default quietly. Pin `version` to an exact release; `latest` is refused, so every run is repeatable.
+
+Every harness gets the same lockdown: the agent can only read, grep and glob inside the checkout. It has no shell, no web and no MCP servers, and the repo's own agent config is ignored. The details for each harness are in [Security](#security).
+
+The model has its own input, `model`, since it is the setting you change most. It takes the harness's format and works for every harness. Putting `model` in `harness-settings` works too, but not both at once.
+
+### Signing in
+
+Every way the agents' own GitHub Actions sign in works here too, through the same inputs. Each example is the action step only; the rest of the workflow is the one in the [quick start](#quick-start). The cloud ones sign in with GitHub's OIDC, so there is no long-lived key: they need `id-token: write` in the job's `permissions`, next to the ones the quick start lists.
+
+**Claude Code with an Anthropic API key** (the quick start):
+
+```yaml
+      - uses: alfonsograziano/needs-human-review@v1
+        with:
+          api-key: ${{ secrets.API_KEY }}
+```
+
+**Claude Code with a Claude subscription.** Run `claude setup-token` on your machine and store the token it prints as `API_KEY`. The review then counts against that plan's usage limits, not per-use billing:
+
+```yaml
+      - uses: alfonsograziano/needs-human-review@v1
+        with:
+          api-key: ${{ secrets.API_KEY }}
+          harness-settings: |
+            auth: oauth
+```
+
+**Claude Code on Amazon Bedrock**, signed in with OIDC. `model` defaults to the `sonnet` alias, which Claude Code maps to Bedrock's model ID; set `model` to a Bedrock model or inference profile ID to pick one. A [Bedrock API key](https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys.html) in `api-key` works too, without the AWS step:
+
+```yaml
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: us-east-1
+      - uses: alfonsograziano/needs-human-review@v1
+        with:
+          harness-settings: |
+            provider: bedrock
+```
+
+**Claude Code on Google Vertex AI**, signed in with workload identity federation. Vertex AI takes no key, so leave `api-key` out. `project` defaults to the one the Google step sets. Put the Google step after the checkout, since the checkout cleans the folder; the action moves the credentials file it writes out of the checkout before the review starts, so the reviewer cannot open it:
+
+```yaml
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      - uses: alfonsograziano/needs-human-review@v1
+        with:
+          harness-settings: |
+            provider: vertex
+            region: global
+```
+
+**Claude Code on Microsoft Foundry**, signed in with Azure OIDC, or with a Foundry key in `api-key` and no Azure step:
+
+```yaml
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - uses: alfonsograziano/needs-human-review@v1
+        with:
+          model: claude-sonnet-5-5
+          harness-settings: |
+            provider: foundry
+            base-url: https://my-resource.services.ai.azure.com
+```
+
+**Claude Code through a gateway** such as OpenCode, LiteLLM or your company's proxy: the key in `api-key`, the endpoint in `base-url`, sent as a bearer token. See the OpenCode example in the [quick start](#quick-start).
+
+**Codex with an OpenAI API key:**
+
+```yaml
+      - uses: alfonsograziano/needs-human-review@v1
+        with:
+          harness: codex
+          api-key: ${{ secrets.API_KEY }}
+```
+
+**Codex on Azure OpenAI.** Your Azure key in `api-key`, and your resource's v1 endpoint, without `/responses` (Codex adds it). `model` is your deployment name:
+
+```yaml
+      - uses: alfonsograziano/needs-human-review@v1
+        with:
+          harness: codex
+          model: my-gpt-deployment
+          api-key: ${{ secrets.API_KEY }}
+          harness-settings: |
+            base-url: https://my-resource.openai.azure.com/openai/v1
+```
+
+**OpenCode with any provider's key.** `model` names the provider, and `api-key` goes in that provider's variable (`opencode/...` takes an OpenCode key, `anthropic/...` an Anthropic key, `openai/...` an OpenAI key). For Bedrock or Vertex AI, use the same cloud sign-in steps as above with an `amazon-bedrock/...` or `google-vertex/...` model and no `api-key`; Vertex AI also needs `VERTEX_LOCATION` in `env`.
+
 ## Inputs
 
 | Input | Default | What it does |
 |---|---|---|
 | `mode` | `shadow` | `shadow`, `advisory` or `autonomous` |
-| `model` | `opencode/deepseek-v4.1-flash` | Model, in OpenCode's `provider/model` format |
-| `opencode-version` | `2.2.5` | OpenCode release to install |
+| `harness` | `claude-code` | The coding agent that runs the review: `claude-code`, `codex` or `opencode` |
+| `model` | the harness's default | Model that runs the review, in the harness's format: `claude-sonnet-5-5` for Claude Code, `gpt-6.1-sol` for Codex, `opencode/deepseek-v4.1-flash` for OpenCode |
+| `harness-settings` | empty | Other `key: value` lines for the harness: `version`, and `effort` and `base-url` for Claude Code and Codex, `provider`, `auth`, `region` and `project` for Claude Code. See [Choosing the harness](#choosing-the-harness) |
+| `api-key` | empty | Key for the model, whatever the harness. Pass it from a secret. Empty uses the agent's own variables from `env` |
 | `github-token` | `${{ github.token }}` | Token for comments, labels, the status and the merge |
 | `protected-paths` | empty | Globs that always need a human, one per line |
 | `self-protected-paths` | empty | Extra paths for the always-on self-protected list |
@@ -280,10 +423,14 @@ Seven scenarios is a smoke test, not a benchmark. It shows the pipeline works en
 
 ## Run it locally
 
-You can check any branch of a local repo without GitHub. The review runs in a temporary git worktree, so your checkout is never touched. It uses your local OpenCode login.
+You can check any branch of a local repo without GitHub. The review runs in a temporary git worktree, so your checkout is never touched. It uses Claude Code unless you pass `--harness`. Set `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` for Claude Code, or `OPENAI_API_KEY` for Codex, because the reviewer runs with a fresh config folder and does not see your interactive login. OpenCode uses your local login. `API_KEY` is the local version of the `api-key` input, and `--base-url` and `--auth` match the settings.
 
 ```bash
 node scripts/local-review.ts --repo ../my-app --base main --head my-branch --protected 'src/payments/**'
+```
+
+```bash
+API_KEY=<your OpenCode key> node scripts/local-review.ts --repo ../my-app --base main --head my-branch --harness claude-code --base-url https://opencode.ai/inference/anthropic
 ```
 
 Add `--json out.json` to keep the full record, or `--dry` to run the hard rules without calling a model.
@@ -313,6 +460,6 @@ node scripts/render-diagram.ts
 
 ## Limits in v1
 
-- Only the OpenCode harness. Pi and Claude Code are planned.
+- Three harnesses: OpenCode, Claude Code and Codex. Pi is planned. The eval results above are from OpenCode; Claude Code and Codex have not been through the sandbox eval yet.
 - No override log yet. Every run leaves a JSON record, which is the raw material for it.
-- The reviewer agent sets its own system prompt and turns off project config, and a local test on OpenCode 2.0.20 showed that a planted `AGENTS.md` or `CLAUDE.md` does not reach the model. That was one test on one version, so the prompt still treats every repo file as untrusted.
+- The reviewer agent sets its own system prompt and turns off project config, and a local test on OpenCode 2.0.20 showed that a planted `AGENTS.md` or `CLAUDE.md` does not reach the model. That was one test on one version, so the prompt still treats every repo file as untrusted. For Claude Code, `CLAUDE.md` is turned off with `CLAUDE_CODE_DISABLE_CLAUDE_MDS` and repo settings with `--restricted`. The flags were checked against Claude Code 2.1.319, and live reviews on the demo repo ran through OpenCode's endpoint with non-Claude models. For Codex, a local test on 0.167.0 with a scripted model checked that the repo's `AGENTS.md` is not sent and that only the three read tools are offered.

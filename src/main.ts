@@ -1,11 +1,12 @@
 // Entry point for GitHub Actions. Run by action.yml as `node src/main.ts`.
 import { appendFile, readFile, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { changesSinceScored, resolveContext, type WorkflowRunEvent } from './context.ts';
+import { moveCredentialFilesOut } from './credentials.ts';
 import { ciState, waitForCi } from './gates.ts';
 import { GitHub } from './github.ts';
-import { FakeHarness } from './harness/fake.ts';
-import { OpenCodeHarness } from './harness/opencode.ts';
+import { createHarness } from './harness/create.ts';
 import { ConfigError, readConfig, type Config } from './inputs.ts';
 import { COMMENT_MARKER, renderReport, verdictRecord, type Action, type ReportInput } from './report.ts';
 import { scorePullRequest } from './score.ts';
@@ -79,7 +80,10 @@ async function run(config: Config): Promise<void> {
   if (ci.state !== 'green') return skip(`CI is ${ci.state} on ${headSha.slice(0, 7)} (${ci.names.join(', ')})`);
 
   const repoDir = env.GITHUB_WORKSPACE ?? process.cwd();
-  const harness = config.harness === 'fake' ? new FakeHarness(() => ({ error: 'fake harness: no model' })) : new OpenCodeHarness();
+  // Before the checkout is locked: a cloud sign-in step may have left a credentials file in it.
+  const moved = await moveCredentialFilesOut(repoDir, env.RUNNER_TEMP ?? tmpdir(), process.env);
+  if (moved.length > 0) console.log(`Moved ${moved.join(', ')} out of the checkout, so the reviewer cannot read it.`);
+  const harness = createHarness(config.harness, config.harnessSettings, config.apiKey);
   const result = await scorePullRequest({
     repoDir,
     baseSha,
