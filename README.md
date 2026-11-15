@@ -4,6 +4,8 @@
 
 ![GitHub Action](https://img.shields.io/badge/GitHub-Action-131313?logo=github&logoColor=white) ![Node 26](https://img.shields.io/badge/Node-26-131313?logo=node.js&logoColor=white) ![Zero runtime dependencies](https://img.shields.io/badge/runtime%20deps-0-cd2016)
 
+[![Watch the 1-minute explainer: does this PR need a human?](docs/explainer-thumbnail.png)](https://youtu.be/iiE5GHZ82-w)
+
 Your coding agents open pull requests faster than your team can review them. Most are small: a typo, a new test, a config tweak. They still wait a day for a reviewer. A few touch payments, auth, or a function that three other files depend on, and those get the same tired glance as the rest.
 
 So every PR raises the same question: **does a human need to review this one?** Needs Human Review answers it as soon as your CI goes green. The answer is always one of two:
