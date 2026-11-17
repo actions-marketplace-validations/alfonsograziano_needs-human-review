@@ -5,11 +5,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CodexHarness, codexArgs, codexEnv, DISABLED_FEATURES, matchReads, parseCodexStream, READ_TOOLS_SERVER, redactCodexStream, TOOL_OUTPUT_TOKEN_LIMIT } from '../src/harness/codex.ts';
 import { callKey, MAX_RESULT_CHARS } from '../src/harness/read-tools.ts';
-import { HarnessError } from '../src/harness/types.ts';
+import { HarnessError, runOnce } from '../src/harness/types.ts';
 
 // Shape of `codex exec --json` (Codex 0.167), with the read-tools MCP server.
 const events = [
-  { type: 'thread.started', thread_id: 't1' },
+  { type: 'thread.started', thread_id: '019a2b3c-4d5e-7f80-9a1b-2c3d4e5f6a7b' },
   { type: 'item.completed', item: { id: 'item_0', type: 'error', message: 'Model metadata for `glm-5.3` not found.' } },
   { type: 'turn.started' },
   { type: 'item.completed', item: { id: 'item_1', type: 'mcp_tool_call', server: 'review', tool: 'read', arguments: { path: 'src/a.ts' }, result: { content: [{ type: 'text', text: '1\tconst a = 1;' }] }, error: null, status: 'completed' } },
@@ -65,7 +65,8 @@ test('codexArgs gives a reviewer with no shell, no web, no AGENTS.md and only th
   const after = (flag: string) => args[args.indexOf(flag) + 1];
   const configs = args.filter((_, i) => args[i - 1] === '-c');
   const config = (key: string) => configs.find((c) => c.startsWith(`${key}=`))?.slice(key.length + 1);
-  for (const flag of ['--json', '--ephemeral', '--ignore-user-config', '--ignore-rules', '--strict-config']) assert.ok(args.includes(flag), flag);
+  for (const flag of ['--json', '--ignore-user-config', '--ignore-rules', '--strict-config']) assert.ok(args.includes(flag), flag);
+  assert.ok(!args.includes('--ephemeral') && !args.includes('resume'), 'the first turn saves its thread, so a follow-up can continue it');
   assert.equal(after('--sandbox'), 'read-only');
   assert.equal(after('--model'), 'glm-5.3');
   assert.equal(config('model_providers.nhr.base_url'), '"https://opencode.ai/inference/openai/v1"');
@@ -126,7 +127,7 @@ test('CodexHarness runs the CLI and returns the answer and the matched reads', a
   const prev = process.env.INPUT_GITHUB_TOKEN;
   process.env.INPUT_GITHUB_TOKEN = 'ghs_secret';
   try {
-    const r = await new CodexHarness({ apiKey: 'oc_key', baseUrl: 'https://opencode.ai/inference/openai/v1' }, bin).run({ systemPrompt: 'S', userMessage: 'review it', workdir: dir, model: 'glm-5.3', timeoutMs: 10_000 });
+    const r = await runOnce(new CodexHarness({ apiKey: 'oc_key', baseUrl: 'https://opencode.ai/inference/openai/v1' }, bin), { systemPrompt: 'S', userMessage: 'review it', workdir: dir, model: 'glm-5.3', timeoutMs: 10_000 });
     assert.equal(r.finalText, '{"decision":"safe"}');
     assert.deepEqual(r.reads, [{ path: 'src/a.ts', fromLine: 1, toLine: 2 }]);
     assert.ok(!r.raw.includes('const a = 1'));
@@ -144,12 +145,44 @@ test('CodexHarness runs the CLI and returns the answer and the matched reads', a
 test('CodexHarness fails on a non-zero exit, a failed turn, no end or no answer', async () => {
   const run = async (out: string, code = 0) => {
     const { bin, dir } = await fakeCodex(out, code);
-    return new CodexHarness({}, bin).run({ systemPrompt: 'S', userMessage: 'm', workdir: dir, model: 'm', timeoutMs: 10_000 });
+    return runOnce(new CodexHarness({}, bin), { systemPrompt: 'S', userMessage: 'm', workdir: dir, model: 'm', timeoutMs: 10_000 });
   };
   const failed = `${JSON.stringify({ type: 'turn.failed', error: { message: '403 Model access is disabled' } })}\n`;
   await assert.rejects(run(failed, 1), (e: unknown) => e instanceof HarnessError && /exited with code 1: 403 Model access is disabled/.test(e.message));
   await assert.rejects(run(failed, 0), (e: unknown) => e instanceof HarnessError && /reported an error/.test(e.message));
   await assert.rejects(run(''), (e: unknown) => e instanceof HarnessError && /without finishing the turn/.test(e.message));
   await assert.rejects(run(`${JSON.stringify({ type: 'turn.completed', usage: {} })}\n`), (e: unknown) => e instanceof HarnessError && /no final answer/.test(e.message));
-  await assert.rejects(new CodexHarness({}, '/nope/codex').run({ systemPrompt: 'S', userMessage: 'm', workdir: tmpdir(), model: 'm', timeoutMs: 1_000 }), /could not start codex/);
+  await assert.rejects(runOnce(new CodexHarness({}, '/nope/codex'), { systemPrompt: 'S', userMessage: 'm', workdir: tmpdir(), model: 'm', timeoutMs: 1_000 }), /could not start codex/);
+});
+
+test('codexArgs continues a thread with exec resume, keeping every flag', () => {
+  const first = codexArgs({ userMessage: 'm', model: 'g', workdir: '/w', systemPromptFile: '/p', readLog: '/r1' });
+  const next = codexArgs({ userMessage: 'more', model: 'g', workdir: '/w', systemPromptFile: '/p', readLog: '/r2', resume: '019a2b3c-4d5e-7f80-9a1b-2c3d4e5f6a7b' });
+  assert.deepEqual(next.slice(-4), ['resume', '019a2b3c-4d5e-7f80-9a1b-2c3d4e5f6a7b', '--', 'more']);
+  assert.deepEqual(next.slice(0, -4).filter((a) => !a.includes('/r2')), first.slice(0, -2).filter((a) => !a.includes('/r1')), 'the same sandbox, tools and features on every turn');
+});
+
+test('parseCodexStream takes the thread ID only when it is a UUID', () => {
+  assert.equal(parseCodexStream(stdout).threadId, '019a2b3c-4d5e-7f80-9a1b-2c3d4e5f6a7b');
+  assert.equal(parseCodexStream(`${JSON.stringify({ type: 'thread.started', thread_id: '--last' })}\n`).threadId, undefined);
+});
+
+test('a Codex session resumes its thread for a follow-up and counts only that turn\'s reads', async () => {
+  const { bin, dir } = await fakeCodex(stdout);
+  const before = await homes();
+  const session = new CodexHarness({}, bin).open({ systemPrompt: 'S', workdir: dir, model: 'g' });
+  try {
+    const first = await session.send('review it', 10_000);
+    const firstArgs = (await readFile(join(dir, 'args.txt'), 'utf8')).trim().split('\n');
+    assert.ok(!firstArgs.includes('resume'));
+    const second = await session.send('read lines 3-4', 10_000);
+    const args = (await readFile(join(dir, 'args.txt'), 'utf8')).trim().split('\n');
+    assert.deepEqual(args.slice(-4), ['resume', '019a2b3c-4d5e-7f80-9a1b-2c3d4e5f6a7b', '--', 'read lines 3-4']);
+    assert.equal(first.reads.length, 1);
+    assert.equal(second.reads.length, 1, 'the first turn\'s read log is not counted again');
+    assert.equal(await homes(), before + 1, 'the Codex home stays while the session is open');
+  } finally {
+    await session.close();
+  }
+  assert.equal(await homes(), before, 'and is removed when it closes');
 });

@@ -3,9 +3,9 @@ import { isDocOrTest } from './globs.ts';
 import { code } from './markdown.ts';
 import type { Harness, HarnessResult } from './harness/types.ts';
 import type { Config } from './inputs.ts';
-import { integratorMessage, sliceMessage, type PrMeta, type SliceSummary } from './prompt.ts';
-import { describeRequirement, missingReads } from './reading.ts';
-import type { GateResult } from './types.ts';
+import { integratorMessage, sliceMessage, unreadMessage, type PrMeta, type SliceSummary } from './prompt.ts';
+import { describeUnread, unreadParts, type Unread } from './reading.ts';
+import type { FileRead, GateResult } from './types.ts';
 import { parseVerdict } from './verdict.ts';
 import { MAX_LINE_CHARS, type Workspace } from './workspace.ts';
 
@@ -16,9 +16,22 @@ export interface RunLog {
   durationMs?: number;
   costUsd?: number;
   reads?: number;
+  /** Messages sent to this reviewer: 1, plus one per reminder about unread lines. */
+  turns?: number;
   finalText?: string;
   raw?: string;
 }
+
+/**
+ * How many times a reviewer that answered before reading everything is told
+ * exactly which lines it skipped and asked to read them and answer again.
+ */
+export const READ_REMINDERS = 2;
+/** A reminder is only sent with at least this much of the run's time left. */
+const REMINDER_MIN_MS = 60_000;
+
+/** A check's result: the outcome, or the lines the reviewer still has to read. */
+type Checked = RunOutcome | { label: string; ok: false; error: string; unread: Unread[] };
 
 export interface ReviewResult {
   aggregate: Aggregate;
@@ -36,6 +49,11 @@ export interface ReviewOptions {
   gates: GateResult[];
   config: Config;
   log?: (line: string) => void;
+}
+
+/** The raw logs of every turn, one after the other. */
+function joinRaw(before: string | undefined, raw: string, reminders: number): string {
+  return reminders === 0 ? raw : `${before ?? ''}\n--- reminder ${reminders}: unread lines ---\n${raw}`;
 }
 
 function humanOnly(reason: string): Aggregate {
@@ -69,37 +87,55 @@ export async function runReview(opts: ReviewOptions): Promise<ReviewResult> {
   }
 
   const deadline = Date.now() + config.timeoutMinutes * 60_000;
-  const timeoutFor = () => Math.max(1_000, Math.min(config.sliceTimeoutMinutes * 60_000, deadline - Date.now()));
   const outcomes: RunOutcome[] = [];
   const logs: RunLog[] = [];
   let stop = false;
 
-  const runOne = async (label: string, userMessage: string, check: (r: HarnessResult) => RunOutcome): Promise<RunOutcome> => {
+  /**
+   * One reviewer: one conversation with the harness. When the check finds
+   * lines the reviewer never read, it gets a fixed message naming them and
+   * answers again, up to READ_REMINDERS times, within the same time limit.
+   * Reads add up across the conversation.
+   */
+  const runOne = async (label: string, userMessage: string, check: (r: HarnessResult, reads: FileRead[], reminders: number) => Checked): Promise<RunOutcome> => {
     if (Date.now() >= deadline) return { label, ok: false, error: `the AI step ran out of time (${config.timeoutMinutes} minutes)` };
     log(`${label}: reviewing`);
-    let result: HarnessResult;
+    const until = Math.min(deadline, Date.now() + config.sliceTimeoutMinutes * 60_000);
+    const session = harness.open({ systemPrompt: opts.systemPrompt, workdir: ws.repoDir, model: config.model });
+    const entry: RunLog & { durationMs: number; costUsd: number } = { label, ok: false, durationMs: 0, costUsd: 0, reads: 0, turns: 0, raw: '' };
+    logs.push(entry);
+    const reads: FileRead[] = [];
+    let message = userMessage;
     try {
-      result = await harness.run({ systemPrompt: opts.systemPrompt, userMessage, workdir: ws.repoDir, model: config.model, timeoutMs: timeoutFor() });
-    } catch (e) {
-      const error = (e as Error).message;
-      logs.push({ label, ok: false, error, raw: (e as { raw?: string }).raw ?? '' });
-      log(`${label}: failed, ${error}`);
-      return { label, ok: false, error };
+      for (let reminders = 0; ; reminders++) {
+        let result: HarnessResult;
+        try {
+          entry.turns = reminders + 1;
+          result = await session.send(message, Math.max(1_000, until - Date.now()));
+        } catch (e) {
+          const error = (e as Error).message;
+          Object.assign(entry, { ok: false, error, raw: joinRaw(entry.raw, (e as { raw?: string }).raw ?? '', reminders) });
+          log(`${label}: failed, ${error}`);
+          return { label, ok: false, error };
+        }
+        reads.push(...result.reads);
+        entry.durationMs += result.durationMs;
+        entry.costUsd += result.costUsd ?? 0;
+        Object.assign(entry, { reads: reads.length, finalText: result.finalText, raw: joinRaw(entry.raw, result.raw, reminders) });
+        const checked = check(result, reads, reminders);
+        if (!checked.ok && 'unread' in checked && reminders < READ_REMINDERS && until - Date.now() >= REMINDER_MIN_MS) {
+          log(`${label}: answered before reading ${checked.unread.map(describeUnread).join(', ')}; asking it to read them`);
+          message = unreadMessage(checked.unread);
+          continue;
+        }
+        const outcome: RunOutcome = checked.ok ? checked : { label, ok: false, error: checked.error, rejected: true };
+        Object.assign(entry, { ok: outcome.ok }, outcome.ok ? {} : { error: outcome.error });
+        log(`${label}: ${outcome.ok ? `${outcome.verdict.decision}, risk ${outcome.verdict.risk}, ${outcome.verdict.confidence}/5` : `invalid, ${outcome.error}`}`);
+        return outcome;
+      }
+    } finally {
+      await session.close().catch(() => undefined);
     }
-    const checked = check(result);
-    const outcome: RunOutcome = checked.ok ? checked : { ...checked, rejected: true };
-    logs.push({
-      label,
-      ok: outcome.ok,
-      ...(outcome.ok ? {} : { error: outcome.error }),
-      durationMs: result.durationMs,
-      costUsd: result.costUsd ?? 0,
-      reads: result.reads.length,
-      finalText: result.finalText,
-      raw: result.raw,
-    });
-    log(`${label}: ${outcome.ok ? `${outcome.verdict.decision}, risk ${outcome.verdict.risk}, ${outcome.verdict.confidence}/5` : `invalid, ${outcome.error}`}`);
-    return outcome;
   };
 
   const sliceTask = async (index: number): Promise<void> => {
@@ -107,11 +143,15 @@ export async function runReview(opts: ReviewOptions): Promise<ReviewResult> {
     if (!slice || stop) return;
     const label = total === 1 ? 'review' : `slice ${slice.index}`;
     const files = [...new Set(slice.items.map((i) => i.path))];
-    const outcome = await runOne(label, sliceMessage(pr, gates, ws.reviewDir, slice.index, total), (r) => {
+    const outcome = await runOne(label, sliceMessage(pr, gates, ws.reviewDir, slice.index, total), (r, reads, reminders) => {
+      // Reading comes first: an answer given before reading is not judged, the reviewer is sent back to read.
+      const unread = unreadParts(slice.items.flatMap((i) => i.mustRead), reads);
+      if (unread.length > 0) {
+        const after = reminders > 0 ? `after ${reminders} reminder${reminders > 1 ? 's' : ''}, ` : '';
+        return { label, ok: false, error: `${after}the tool-call log shows these were not read: ${unread.map(describeUnread).join(', ')}`, unread };
+      }
       const parsed = parseVerdict(r.finalText, { role: 'slice', sliceFiles: files, runtimeChanged: files.some((f) => !isDocOrTest(f)) });
       if (!parsed.ok) return { label, ok: false, error: parsed.error };
-      const missing = missingReads(slice.items.flatMap((i) => i.mustRead), r.reads);
-      if (missing.length > 0) return { label, ok: false, error: `the tool-call log shows these were not read: ${missing.map(describeRequirement).join(', ')}` };
       return { label, ok: true, verdict: parsed.verdict };
     });
     outcomes[index] = outcome;

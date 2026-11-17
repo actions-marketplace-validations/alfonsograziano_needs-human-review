@@ -4,7 +4,7 @@ import { chmod, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ClaudeCodeHarness, claudeArgs, claudeEnv, keyVariable, parseStream, readFromResult, redactStream } from '../src/harness/claude-code.ts';
-import { HarnessError } from '../src/harness/types.ts';
+import { HarnessError, runOnce } from '../src/harness/types.ts';
 
 // Shape of `claude --print --output-format stream-json --verbose` (Claude Code 2.1).
 const events = [
@@ -99,8 +99,8 @@ test('redactStream drops what the tools returned, keeps what ran and the text', 
 });
 
 test('claudeArgs gives a read-only reviewer with no shell, web, MCP, skills or project settings', () => {
-  const args = claudeArgs({ userMessage: '-starts with a dash', model: 'claude-sonnet-5-5', systemPromptFile: '/tmp/p.md', effort: 'high' });
-  for (const flag of ['--print', '--restricted', '--strict-mcp-config', '--disable-slash-commands', '--no-session-persistence']) assert.ok(args.includes(flag), flag);
+  const args = claudeArgs({ userMessage: '-starts with a dash', model: 'claude-sonnet-5-5', systemPromptFile: '/tmp/p.md', sessionId: 'abc', resume: false, effort: 'high' });
+  for (const flag of ['--print', '--restricted', '--strict-mcp-config', '--disable-slash-commands']) assert.ok(args.includes(flag), flag);
   const after = (flag: string) => args[args.indexOf(flag) + 1];
   assert.equal(after('--tools'), 'Read,Grep,Glob');
   assert.equal(after('--allowedTools'), 'Read,Grep,Glob');
@@ -109,9 +109,14 @@ test('claudeArgs gives a read-only reviewer with no shell, web, MCP, skills or p
   assert.equal(after('--model'), 'claude-sonnet-5-5');
   assert.equal(after('--effort'), 'high');
   assert.equal(after('--output-format'), 'stream-json');
+  assert.equal(after('--session-id'), 'abc');
+  assert.ok(!args.includes('--resume'));
   assert.deepEqual(args.slice(-2), ['--', '-starts with a dash'], 'the message is never read as a flag');
   assert.ok(!args.includes('--mcp-config') && !args.some((a) => /Bash|WebFetch|Edit|Write/.test(a)));
-  assert.ok(!claudeArgs({ userMessage: 'm', model: 'x', systemPromptFile: 'p' }).includes('--effort'));
+  assert.ok(!claudeArgs({ userMessage: 'm', model: 'x', systemPromptFile: 'p', sessionId: 'abc', resume: false }).includes('--effort'));
+  const next = claudeArgs({ userMessage: 'm', model: 'x', systemPromptFile: 'p', sessionId: 'abc', resume: true });
+  assert.equal(next[next.indexOf('--resume') + 1], 'abc');
+  assert.ok(!next.includes('--session-id'));
 });
 
 test('claudeEnv passes model credentials only, and turns off CLAUDE.md and memory', () => {
@@ -199,7 +204,7 @@ test('ClaudeCodeHarness runs the CLI in the workdir and returns the answer and r
   const prev = process.env.INPUT_GITHUB_TOKEN;
   process.env.INPUT_GITHUB_TOKEN = 'ghs_secret';
   try {
-    const r = await new ClaudeCodeHarness({ effort: 'low', apiKey: 'oc_sk_test', baseUrl: 'https://opencode.ai/inference/anthropic' }, bin).run({ systemPrompt: 'SYSTEM PROMPT', userMessage: 'review it', workdir: dir, model: 'claude-haiku-5-5', timeoutMs: 10_000 });
+    const r = await runOnce(new ClaudeCodeHarness({ effort: 'low', apiKey: 'oc_sk_test', baseUrl: 'https://opencode.ai/inference/anthropic' }, bin), { systemPrompt: 'SYSTEM PROMPT', userMessage: 'review it', workdir: dir, model: 'claude-haiku-5-5', timeoutMs: 10_000 });
     assert.equal(r.finalText, 'Done.\n{"decision":"safe"}');
     assert.equal(r.reads.length, 2);
     assert.equal(r.costUsd, 0.0123);
@@ -222,7 +227,7 @@ test('ClaudeCodeHarness runs the CLI in the workdir and returns the answer and r
 test('ClaudeCodeHarness fails on a non-zero exit, an error result or no result', async () => {
   const run = async (out: string, code = 0) => {
     const { bin, dir } = await fakeClaude(out, code);
-    return new ClaudeCodeHarness({}, bin).run({ systemPrompt: 'S', userMessage: 'm', workdir: dir, model: 'm', timeoutMs: 10_000 });
+    return runOnce(new ClaudeCodeHarness({}, bin), { systemPrompt: 'S', userMessage: 'm', workdir: dir, model: 'm', timeoutMs: 10_000 });
   };
   const authError = `${JSON.stringify({ type: 'result', subtype: 'success', is_error: true, result: 'Invalid API key' })}\n`;
   await assert.rejects(run(authError, 1), (e: unknown) => e instanceof HarnessError && /exited with code 1: Invalid API key/.test(e.message));
@@ -230,7 +235,7 @@ test('ClaudeCodeHarness fails on a non-zero exit, an error result or no result',
   await assert.rejects(run(''), (e: unknown) => e instanceof HarnessError && /without a result/.test(e.message));
   const empty = `${JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '  ' })}\n`;
   await assert.rejects(run(empty), (e: unknown) => e instanceof HarnessError && /no final answer/.test(e.message));
-  await assert.rejects(new ClaudeCodeHarness({}, '/nope/claude').run({ systemPrompt: 'S', userMessage: 'm', workdir: tmpdir(), model: 'm', timeoutMs: 1_000 }), /could not start claude/);
+  await assert.rejects(runOnce(new ClaudeCodeHarness({}, '/nope/claude'), { systemPrompt: 'S', userMessage: 'm', workdir: tmpdir(), model: 'm', timeoutMs: 1_000 }), /could not start claude/);
 });
 
 test('file content cannot fake line numbers with a line separator', () => {
@@ -273,4 +278,24 @@ test('each provider gets its own switch, key variable, base URL and region', () 
   assert.equal(foundry.ANTHROPIC_FOUNDRY_BASE_URL, 'https://r.services.ai.azure.com');
   assert.equal(foundry.ANTHROPIC_FOUNDRY_API_KEY, 'fk');
   assert.equal(foundry.AZURE_CLIENT_ID, 'c');
+});
+
+test('a Claude Code session resumes its own session ID for a follow-up', async () => {
+  const { bin, dir } = await fakeClaude(stdout);
+  const before = await nhrTempDirs();
+  const session = new ClaudeCodeHarness({}, bin).open({ systemPrompt: 'S', workdir: dir, model: 'm' });
+  try {
+    await session.send('review it', 10_000);
+    const first = (await readFile(join(dir, 'args.txt'), 'utf8')).trim().split('\n');
+    const id = first[first.indexOf('--session-id') + 1] ?? '';
+    assert.match(id, /^[0-9a-f-]{36}$/);
+    await session.send('read lines 3-4', 10_000);
+    const second = (await readFile(join(dir, 'args.txt'), 'utf8')).trim().split('\n');
+    assert.equal(second[second.indexOf('--resume') + 1], id);
+    assert.deepEqual(second.slice(-2), ['--', 'read lines 3-4']);
+    assert.equal(await nhrTempDirs(), before + 1, 'the config folder, which holds the session, stays while it is open');
+  } finally {
+    await session.close();
+  }
+  assert.equal(await nhrTempDirs(), before, 'and is removed when it closes');
 });

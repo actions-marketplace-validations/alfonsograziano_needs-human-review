@@ -1,6 +1,6 @@
 # Needs Human Review — Spec
 
-Status: v1 built, 2026-11-02 (spec v0.12). v0.12 (2026-11-09): a change to code or config with no callers must still list the places the reviewer checked in `affected_code`, and the comment keeps a run that did not finish apart from an answer that was rejected (sections 5, 8.1 and 9). v0.11 (2026-11-09): every sign-in the agents' own GitHub Actions support: Claude Code on Bedrock, Vertex AI and Foundry, and with a Claude subscription token; Codex on Azure OpenAI; credentials files moved out of the checkout (section 6.1). v0.10 (2026-11-09): Claude Code is the default harness; the v1.0 `opencode-version` input is removed. v0.9 (2026-11-09): Codex harness, with read-only tools served by the action's own MCP server (section 6.4). v0.8 (2026-11-09): Claude Code harness, and harness settings in one `harness-settings` input (sections 6 and 10). v0.7 (2026-11-07): renamed from AI Risk Scorer to Needs Human Review. The labels are now `needs-human-review` and `safe-to-merge`, the commit status is `human-review`, the default skip label is `needs-human-review:always`, and the comment leads with "Human review required" or "No human review needed". v0.6: fixes from the 2026-11-05 adversarial review (section 17). v0.5: implementation notes in section 16. v0.2: short fixed user message, read-only review workspace, big PRs split into slices. v0.3: the reviewer must read every changed file in full and do an impact pass, checked from the tool-call log. v0.4: confidence is 1 to 5 stars with fixed meanings, not a percentage. Owner: Alfonso Graziano.
+Status: v1 built, 2026-11-02 (spec v0.13). v0.13 (2026-11-16): a reviewer that answers before reading every required line is told which lines it skipped and asked to read them and answer again, up to twice, in the same session; a harness adapter now opens a session that can take a follow-up (sections 4.6 and 6). v0.12 (2026-11-09): a change to code or config with no callers must still list the places the reviewer checked in `affected_code`, and the comment keeps a run that did not finish apart from an answer that was rejected (sections 5, 8.1 and 9). v0.11 (2026-11-09): every sign-in the agents' own GitHub Actions support: Claude Code on Bedrock, Vertex AI and Foundry, and with a Claude subscription token; Codex on Azure OpenAI; credentials files moved out of the checkout (section 6.1). v0.10 (2026-11-09): Claude Code is the default harness; the v1.0 `opencode-version` input is removed. v0.9 (2026-11-09): Codex harness, with read-only tools served by the action's own MCP server (section 6.4). v0.8 (2026-11-09): Claude Code harness, and harness settings in one `harness-settings` input (sections 6 and 10). v0.7 (2026-11-07): renamed from AI Risk Scorer to Needs Human Review. The labels are now `needs-human-review` and `safe-to-merge`, the commit status is `human-review`, the default skip label is `needs-human-review:always`, and the comment leads with "Human review required" or "No human review needed". v0.6: fixes from the 2026-11-05 adversarial review (section 17). v0.5: implementation notes in section 16. v0.2: short fixed user message, read-only review workspace, big PRs split into slices. v0.3: the reviewer must read every changed file in full and do an impact pass, checked from the tool-call log. v0.4: confidence is 1 to 5 stars with fixed meanings, not a percentage. Owner: Alfonso Graziano.
 
 ## 1. What it is
 
@@ -225,7 +225,7 @@ A reviewer who only reads the patch cannot see any of these. So the reviewer doe
 1. **Function context in every patch.** Patches are made with `--function-context`, so even the patch alone shows the whole function around each change.
 2. **The whole file, required.** For every changed file in its slice, the reviewer must read the full new version. The old version is there too (`base/<path>`), so it can compare what the code did before with what it does now.
 3. **Impact, required.** The prompt asks for an explicit impact pass (Appendix A): what unchanged code calls or depends on the changed code, what code paths can now reach it, and what behaves differently even though its lines did not change. The reviewer searches the repo for callers with its read-only tools. The answer goes into the verdict as `affected_code` (section 5), so a human sees what was checked.
-4. **Proof of reading, checked in code.** The harness reports which files the agent actually opened, from its tool-call log (section 6.1). After each run, the action checks that log: every changed file in the slice must have been read in full. If one was not, the verdict is invalid and the PR needs a human. The model cannot claim it read a file. The log shows whether it did. Read tools often stop at a few thousand lines per call (OpenCode stops at 2,000), so the action merges all the line ranges the agent read for a file. The file counts as read in full when those ranges cover every line. The read tool also cuts lines longer than 2,000 characters while still reporting the line as read, so code past the cut would be invisible. A changed file (or patch) with a line longer than 2,000 characters means needs a human, before any reviewer runs.
+4. **Proof of reading, checked in code.** The harness reports which files the agent actually opened, from its tool-call log (section 6.1). After each run, the action checks that log: every changed file in the slice must have been read in full. If one was not, the verdict is invalid and the PR needs a human. The model cannot claim it read a file. The log shows whether it did. Read tools often stop at a few thousand lines per call (OpenCode stops at 2,000), so the action merges all the line ranges the agent read for a file. The file counts as read in full when those ranges cover every line. When the reviewer answers before its reads cover everything, the action does not judge that answer. It sends the same reviewer, in the same session, a fixed message listing the exact paths and line ranges it never read (for example `lib/talks-schedule.js: lines 121-279`), and asks it to read them and answer again. The message is built only from the read plan and the tool-call log, never from file content or the model's words. It does this at most twice (`READ_REMINDERS`), within the run's own time limit (`slice-timeout-minutes`), and only with at least a minute of it left. Reads add up across the session. If lines are still unread after that, the verdict is invalid, and the reason names them. The read tool also cuts lines longer than 2,000 characters while still reporting the line as read, so code past the cut would be invisible. A changed file (or patch) with a line longer than 2,000 characters means needs a human, before any reviewer runs.
 
 The integrator (section 4.7, step 5) does the same at the level of the whole PR: it looks at how changes in different slices affect each other and the code around them.
 
@@ -257,7 +257,7 @@ A PR can be too big for one context window. The action never cuts a diff and nev
 | Final confidence = the lowest confidence of any run | The chain is as sure as its least sure link. |
 | Any run fails, times out or gives an invalid verdict → needs a human | A slice nobody reviewed is never "safe". |
 | A reviewer's `files_reviewed` does not list every file in its slice → that verdict is invalid | Every file must be claimed by a reviewer. |
-| The tool-call log shows a changed file in the slice was not read in full → that verdict is invalid | Claimed is not enough. The log must show the reading (section 4.6). |
+| The tool-call log shows a changed file in the slice was not read in full, even after the reminders → that verdict is invalid | Claimed is not enough. The log must show the reading (section 4.6). |
 | Reasons from every run are kept, tagged with the slice | A human sees where the risk was found. |
 
 The integrator can only add risk. Even if it says "safe", the slices still decide.
@@ -341,22 +341,27 @@ The action talks to coding agents through one small interface:
 ```ts
 interface Harness {
   readonly name: string;
-  run(input: HarnessInput): Promise<HarnessResult>;
+  open(input: SessionInput): HarnessSession;
 }
 
-interface HarnessInput {
+interface SessionInput {
   systemPrompt: string;   // parts 1 + 2 + 3 from section 4
-  userMessage: string;    // part 4: short, fixed, no diff
   workdir: string;        // read-only repo at the head SHA, with the review folder inside
   model: string;          // from harness-settings, e.g. "opencode/deepseek-v4.1-flash"
-  timeoutMs: number;
 }
 
-interface HarnessResult {
+interface HarnessSession {
+  // The first message is part 4 (short, fixed, no diff). A later one continues
+  // the same conversation: the reminder about unread lines (section 4.6).
+  send(userMessage: string, timeoutMs: number): Promise<HarnessResult>;
+  close(): Promise<void>;   // removes whatever the session kept on disk
+}
+
+interface HarnessResult {   // one turn
   finalText: string;      // the model's last message
   raw: string;            // full harness output, kept for the log
   durationMs: number;
-  reads: FileRead[];      // every file the agent opened, from the tool-call log
+  reads: FileRead[];      // every file the agent opened in this turn, from the tool-call log
 }
 
 interface FileRead {
@@ -368,7 +373,7 @@ interface FileRead {
 
 `reads` is what makes the proof-of-reading check possible (section 4.6). An adapter must fill it from the harness's own event log, never from what the model says. A harness that cannot report its tool calls cannot be used.
 
-One `run` is one reviewer: one slice, or the integrator. The action calls it as many times as section 4.7 needs. The harness never has to know about slices, so an adapter stays small.
+One session is one reviewer: one slice, or the integrator. The action opens as many as section 4.7 needs. An adapter must be able to continue a session with a second message, keeping what the agent already read, and must report only the reads of the turn it ran. The harness never has to know about slices, so an adapter stays small.
 
 The `harness` input picks the adapter: `claude-code` (default), `codex` or `opencode`. Claude Code is the default because it is the coding agent most teams already use. `pi` is planned (section 14).
 
@@ -417,7 +422,7 @@ Each harness gets its own credentials through an allow-list (sections 6.2 and 6.
 - The agent process gets an allow-listed environment: what a CLI needs (`PATH`, `HOME`, locale, temp and proxy variables, `XDG_*`) and the model's credentials (`OPENCODE_*`, `*_API_KEY`, `*_BASE_URL`, `AWS_*`, `GOOGLE_*`, `AZURE_*`). Never `INPUT_*` (that holds the GitHub token), `GITHUB_*`, `ACTIONS_*` or `RUNNER_*`. Whatever the agent can read, the model can repeat.
 - The raw event log kept for the verdict record has every tool's output removed. It keeps which tools ran on which paths and the model's text, never file content.
 - It sets `OPENCODE_DISABLE_PROJECT_CONFIG=1`, so an `opencode.json` or `.opencode/` folder in the PR cannot change the agent, and sets `PWD` to the workdir, because OpenCode takes its project root from `PWD`.
-- It runs `opencode run --standalone --agent human-review --model <model> --format json` with the PR message, inside the checked-out repo.
+- It runs `opencode run --standalone --agent human-review --model <model> --format json` with the PR message, inside the checked-out repo. A follow-up adds `--session <id>`, with the session ID from the first turn's events (only letters, digits and `_`, so it can never be read as a flag).
 - The reads for the proof-of-reading check come from completed `read` tool calls in the JSON event stream. The line range is taken from the tool's own output ("Read file x, lines 1-2000"), not from what the model asked for.
 - The key comes from the `api-key` input, passed from a secret named `API_KEY` in the docs and examples (the same name for every harness), and reaches OpenCode as `OPENCODE_API_KEY`. The default model is `opencode/deepseek-v4.1-flash` on OpenCode Zen, which bills the key's workspace per use. Zen works with a plain API key in CI. OpenCode Go models (`opencode-go/...`) need a Go subscription on the key's workspace and are meant for OpenCode's own apps, so they are not the default. The action never logs the key.
 - Each run has a hard timeout (`slice-timeout-minutes`, default 10) that kills the process. The whole AI step also has a limit (`timeout-minutes`, default 30). A timeout means needs a human.
@@ -430,8 +435,9 @@ Each harness gets its own credentials through an allow-list (sections 6.2 and 6.
   - `--tools Read,Grep,Glob` and `--allowedTools Read,Grep,Glob` with `--permission-mode dontAsk`: the model is offered only those three tools, and anything else is denied instead of asked.
   - `--strict-mcp-config` with no `--mcp-config`, so no MCP server loads, not even one from a `.mcp.json` in the PR. `--disable-slash-commands` turns off skills.
   - `--system-prompt-file`: the system prompt replaces Claude Code's own. It is read from a file so a long custom prompt does not hit the argument size limit.
-  - `--max-turns 80`, `--no-session-persistence`, `--output-format stream-json --verbose`, and `--` before the PR message.
-- Environment: `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1`, so a `CLAUDE.md` in the PR never reaches the model as instructions, and `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`. `CLAUDE_CONFIG_DIR` is a fresh temp folder per run, removed after it, so nothing from the runner's `~/.claude` (plugins, settings, sessions) loads. `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` and `DISABLE_AUTOUPDATER=1` keep it from updating itself or sending telemetry.
+  - `--max-turns 80`, `--output-format stream-json --verbose`, and `--` before the PR message.
+  - `--session-id <uuid>` on the first turn, with a UUID the action makes, and `--resume <uuid>` on a follow-up. The session is saved in the session's own `CLAUDE_CONFIG_DIR` (below), so nothing is shared with other runs.
+- Environment: `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1`, so a `CLAUDE.md` in the PR never reaches the model as instructions, and `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`. `CLAUDE_CONFIG_DIR` is a fresh temp folder per session, removed when the session closes, so nothing from the runner's `~/.claude` (plugins, settings, sessions) loads. `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` and `DISABLE_AUTOUPDATER=1` keep it from updating itself or sending telemetry.
 - Credentials allowed through: `ANTHROPIC_*` (the API key, base URL, Foundry and Vertex settings), `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CODE_SKIP_*_AUTH`, `AWS_*`, `GOOGLE_*`, `GCLOUD_PROJECT`, `CLOUD_ML_REGION`, `VERTEX_REGION_*` and `AZURE_*`. Nothing else, including other harnesses' keys. The `CLAUDE_CODE_USE_*` switches come only from the `provider` setting (section 6.1).
 - Proof of reading comes from successful `Read` tool results in the stream, never from what the model asked for. First the structured result Claude Code attaches to the tool result (`file.startLine`, `file.numLines`); when one message holds several results, the line numbers in the text the tool returned. A read whose range cannot be told from the result does not count, so the check fails and a human reviews the PR. Failed reads, Grep and Glob never count.
 - The answer is the `result` field of the final `result` event. A run counts as failed when that event says `is_error: true`, even if its subtype is `success` (Claude Code reports an invalid key that way), when the subtype is anything else (for example `error_max_turns`), when the process exits non-zero, or when there is no result event.
@@ -447,7 +453,7 @@ So the adapter takes the shell away and brings its own tools:
 
 - **`src/harness/read-tools-server.ts`**, a small stdio MCP server in this repo (no dependencies), is the agent's only way to see the code. It serves `read`, `grep` and `glob`, all inside the workdir: paths are resolved with `realpath` and anything outside it, including through a symlink, is refused. `read` returns numbered lines, at most 2,000 lines and 24,000 characters per call, and cuts lines over 2,000 characters (section 4.6 already sends those to a human). `grep` and `glob` skip `.git` and symlinks and never count as reading.
 - **Proof of reading comes from that server**, not from Codex: before it answers a `read`, it appends the exact range it returned, with the call's arguments, to a log file outside the workdir. The agent cannot write to it. The adapter counts a logged read only when Codex's own event stream shows a completed `read` call with the same arguments, so a result that never reached the model does not count. Each tool's `output_token_limit` is set to 20,000, far above what one result can hold, so Codex never cuts what the log says the model got.
-- **The run**: `codex exec --json --ephemeral --ignore-user-config --ignore-rules --strict-config --sandbox read-only`, with a fresh `CODEX_HOME` per run (no login, config, skills or sessions from the runner). `--strict-config` makes a misspelled override an error instead of a silently ignored setting.
+- **The run**: `codex exec --json --ignore-user-config --ignore-rules --strict-config --sandbox read-only`, with a fresh `CODEX_HOME` per session (no login, config, skills or sessions from the runner), removed when the session closes. The thread is saved there, so a follow-up runs the same command with `resume <thread_id>` before the prompt, using the ID from the first turn's `thread.started` event (accepted only as a UUID). Each turn gets its own read log, so a turn only counts its own reads. `--strict-config` makes a misspelled override an error instead of a silently ignored setting.
 - **Overrides** (`-c`): our own model provider (`base_url`, Responses API, key from `OPENAI_API_KEY`); `approval_policy="never"`; `project_doc_max_bytes=0`, so an `AGENTS.md` in the PR never reaches the model (by default Codex sends it as instructions); `model_instructions_file`, so the system prompt replaces Codex's own; `web_search="disabled"`; `skills.include_instructions=false`; the read-tools MCP server, `required`, with only its three tools enabled and approved up front.
 - **Features turned off**: `shell_tool` and `unified_exec` (the shell), `multi_agent`, `goals`, `view_image`, `image_generation`, `apps`, `plugins`, `remote_plugin`, `hooks`, `skill_search`, `skill_mcp_dependency_install`, `tool_suggest`, `browser_use`, `computer_use`, `sleep_tool`, `shell_snapshot`, `daemon_auto_start`, `in_app_updates`. What is left for the model: the three read tools, Codex's MCP resource listing (our server has no resources) and `request_user_input` (only works in plan mode). A Codex release that renames a feature fails `--disable` with an error, which is why `version` is pinned.
 - A `.codex/config.toml` in the PR is not loaded (checked locally with one that declared an MCP server).
@@ -580,7 +586,7 @@ The README says this plainly: the AI step lowers risk, it does not remove it. Th
 | Confidence below `min-confidence` | needs a human |
 | One slice or the integrator fails, times out or gives an invalid verdict | needs a human, even if every other slice said safe |
 | A reviewer does not list every file in its slice | needs a human |
-| The tool-call log shows a changed file was not read in full | needs a human |
+| The tool-call log shows a changed file was not read in full, after two reminders naming the unread lines | needs a human |
 | `"safe"` on a change to code or config with an empty `affected_code` | needs a human (answer rejected) |
 | More slices than `max-slices` | needs a human |
 | Review folder cannot be written or made read-only | needs a human |
@@ -794,7 +800,7 @@ CI has already passed. Tests, linters and type checks are green. Protected paths
 
 1. Read the PR title and body, then `pr.json` in the review folder to see every file that changed.
 2. Read every patch you were given. Do not skip any. List each file in `files_reviewed`.
-3. For every changed file, read the whole file, not only the patch. Read the old version in `base/` when you need to see what the code did before. Your file reads are logged and checked. A file you did not open counts as not reviewed.
+3. For every changed file, read the whole file, not only the patch. Read the old version in `base/` when you need to see what the code did before. Your file reads are logged and checked. A file you did not open counts as not reviewed. If you read a file in parts, your reads together must cover every line.
 4. Do the impact pass. Do not judge the diff on its own. Judge the change inside the code it lands in. For each change, ask:
    - What unchanged code in this file uses what changed? Does it still work? Look at every branch, not just the common path.
    - Who calls the changed functions, types or values? Search the repo for them and open the callers.

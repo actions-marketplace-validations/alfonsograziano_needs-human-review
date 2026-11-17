@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import type { Config } from './inputs.ts';
+import type { Unread } from './reading.ts';
 import type { GateResult } from './types.ts';
 
 const PROMPTS_DIR = fileURLToPath(new URL('../prompts/', import.meta.url));
@@ -91,6 +92,25 @@ export function sliceMessage(pr: PrMeta, gates: GateResult[], reviewDir: string,
     `The review folder is \`${reviewDir}/\`. \`${reviewDir}/pr.json\` lists every changed file. ${scope}`,
     'For every file in your slice: read its patch, read the files listed under mustRead (the whole changed file, or the line ranges given), then do the impact pass on the code the change can reach. The old version of each file is in the review folder under `base/`.',
     'When you are done, answer with the JSON verdict only.',
+  ].join('\n');
+}
+
+/**
+ * The fixed follow-up sent to a reviewer that answered before reading
+ * everything its slice requires. Built only from the read plan and the
+ * tool-call log: paths and line numbers, never file content or model text.
+ */
+export function unreadMessage(unread: Unread[]): string {
+  const lines = unread.map((u) => {
+    const where = u.neverOpened ? 'the whole file, you never opened it' : u.ranges.map(([a, b]) => (a === b ? `line ${a}` : `lines ${a}-${b}`)).join(', ');
+    return `- ${JSON.stringify(u.requirement.path)}: ${where}`;
+  });
+  return [
+    'Your answer was not accepted yet. The action checks your tool-call log, and it shows you did not read everything your slice requires. These lines were never read:',
+    '',
+    ...lines,
+    '',
+    'Read them now with the read tool. You can read only these line ranges. Then review again with what you found, and answer with the full JSON verdict only. Your earlier answer is discarded: only the next one counts.',
   ].join('\n');
 }
 
