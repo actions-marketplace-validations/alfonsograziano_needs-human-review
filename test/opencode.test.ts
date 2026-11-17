@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { opencodeConfig, parseEvents, readFromToolPart } from '../src/harness/opencode.ts';
+import { opencodeArgs, opencodeConfig, parseEvents, readFromToolPart } from '../src/harness/opencode.ts';
 
 // Shape copied from a real `opencode run --format json` run (OpenCode 2.0.20).
 const events = [
@@ -94,4 +94,19 @@ test('api-key goes in the variable of the model provider', async () => {
   assert.equal(keyVariable('google/gemini-3-pro'), 'GOOGLE_GENERATIVE_AI_API_KEY');
   assert.equal(keyVariable('deep-infra/x'), 'DEEP_INFRA_API_KEY');
   assert.equal(keyVariable('amazon-bedrock/anthropic.claude-sonnet-5-5'), 'AWS_BEARER_TOKEN_BEDROCK');
+});
+
+test('opencodeArgs continues a session only when given one', () => {
+  const first = opencodeArgs({ model: 'opencode/m', userMessage: 'review it' });
+  assert.ok(!first.includes('--session'));
+  assert.equal(first.at(-1), 'review it');
+  const next = opencodeArgs({ model: 'opencode/m', userMessage: 'read more', sessionId: 'ses_abc' });
+  assert.equal(next[next.indexOf('--session') + 1], 'ses_abc');
+  assert.deepEqual(next.filter((a) => a !== '--session' && a !== 'ses_abc').slice(0, -1), first.slice(0, -1), 'the same agent, model and format');
+});
+
+test('parseEvents takes the session ID from the events, and ignores one that could be a flag', () => {
+  const line = (sessionID: string) => `${JSON.stringify({ type: 'text', sessionID, part: { messageID: 'm', text: 'x' } })}\n`;
+  assert.equal(parseEvents('/w', line('ses_e1cb2190dffeARKdak5PHT7yut')).sessionId, 'ses_e1cb2190dffeARKdak5PHT7yut');
+  assert.equal(parseEvents('/w', line('--continue')).sessionId, undefined);
 });

@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { FakeHarness, type FakeAnswer } from '../src/harness/fake.ts';
 import type { HarnessInput } from '../src/harness/types.ts';
-import { runReview } from '../src/review.ts';
+import { READ_REMINDERS, runReview } from '../src/review.ts';
 import type { Slice } from '../src/slices.ts';
 import type { FileRead } from '../src/types.ts';
 import { prepareWorkspace, type Workspace } from '../src/workspace.ts';
@@ -111,6 +111,50 @@ test('a reviewer that skipped reading a file is not trusted', async () => {
     assert.equal(r.aggregate.decision, 'needs_human');
     assert.ok(r.aggregate.rejected[0]?.includes('src/f01.ts'));
     assert.deepEqual(r.aggregate.failures, []);
+  } finally {
+    await repo.cleanup();
+  }
+});
+
+test('a reviewer that skipped lines is told which ones, reads them and is trusted', async () => {
+  const { repo, base, head } = await bigRepo(2);
+  try {
+    const ws = await prepareWorkspace({ repoDir: repo.dir, baseSha: base, headSha: head, config: testConfig(), pr: {} });
+    const files = ws.slices[0]?.items.map((i) => i.path) ?? [];
+    let first: FileRead[] = [];
+    const harness = new FakeHarness(async (input): Promise<FakeAnswer> => {
+      if (input.turn === 1) {
+        const { reads } = await sliceFor(ws, input);
+        first = reads;
+        // Reads src/f01.ts only up to line 10.
+        return { finalText: verdict(files), reads: reads.map((r) => (r.path === 'src/f01.ts' ? { path: r.path, fromLine: 1, toLine: 10 } : r)) };
+      }
+      return { finalText: verdict(files), reads: [{ path: 'src/f01.ts', fromLine: 11, toLine: 100 }] };
+    });
+    const r = await runReview({ ws, harness, systemPrompt: 'S', pr, gates: [], config: testConfig() });
+    assert.ok(first.length > 0);
+    assert.equal(harness.calls.length, 2);
+    const reminder = harness.calls[1];
+    assert.equal(reminder?.turn, 2, 'the reminder continues the same session');
+    assert.match(reminder?.userMessage ?? '', /"src\/f01\.ts": lines 11-63/);
+    assert.ok(!reminder?.userMessage.includes('f00'), 'only what is missing');
+    assert.equal(r.aggregate.decision, 'safe');
+    assert.equal(r.runs.length, 1);
+    assert.equal(r.runs[0]?.turns, 2);
+  } finally {
+    await repo.cleanup();
+  }
+});
+
+test('a reviewer that still skips lines after the reminders is rejected', async () => {
+  const { repo, base, head } = await bigRepo(1);
+  try {
+    const ws = await prepareWorkspace({ repoDir: repo.dir, baseSha: base, headSha: head, config: testConfig(), pr: {} });
+    const harness = new FakeHarness(() => ({ finalText: verdict(['src/f00.ts']), reads: [] }));
+    const r = await runReview({ ws, harness, systemPrompt: 'S', pr, gates: [], config: testConfig() });
+    assert.equal(harness.calls.length, 1 + READ_REMINDERS);
+    assert.equal(r.aggregate.decision, 'needs_human');
+    assert.match(r.aggregate.rejected[0] ?? '', /^review: after 2 reminders, the tool-call log shows these were not read: .*src\/f00\.ts \(never opened\)/);
   } finally {
     await repo.cleanup();
   }

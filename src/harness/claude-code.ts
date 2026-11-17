@@ -1,10 +1,11 @@
+import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { FileRead } from '../types.ts';
 import { agentEnv, relativePath, runProcess, timeoutMessage } from './process.ts';
 import type { ClaudeProvider } from './settings.ts';
-import { HarnessError, type Harness, type HarnessInput, type HarnessResult } from './types.ts';
+import { HarnessError, type Harness, type HarnessResult, type HarnessSession, type SessionInput } from './types.ts';
 
 /** The only tools the reviewer gets. All three only read. */
 export const TOOLS = 'Read,Grep,Glob';
@@ -22,8 +23,10 @@ export const MAX_TURNS = 80;
  *   one from a `.mcp.json` in the PR. `--disable-slash-commands` turns off skills.
  * - The system prompt replaces Claude Code's own, read from a file so a long
  *   custom prompt does not hit the argument size limit.
+ * - The first turn starts session `sessionId`; a follow-up resumes it. The
+ *   session lives in the session's own CLAUDE_CONFIG_DIR, removed at the end.
  */
-export function claudeArgs(input: { userMessage: string; model: string; systemPromptFile: string; effort?: string }): string[] {
+export function claudeArgs(input: { userMessage: string; model: string; systemPromptFile: string; sessionId: string; resume: boolean; effort?: string }): string[] {
   return [
     '--print',
     '--restricted',
@@ -38,7 +41,7 @@ export function claudeArgs(input: { userMessage: string; model: string; systemPr
     '--max-turns', String(MAX_TURNS),
     '--output-format', 'stream-json',
     '--verbose',
-    '--no-session-persistence',
+    ...(input.resume ? ['--resume', input.sessionId] : ['--session-id', input.sessionId]),
     // Everything after -- is the prompt, even if it starts with a dash.
     '--',
     input.userMessage,
@@ -282,36 +285,49 @@ export class ClaudeCodeHarness implements Harness {
     this.#conn = conn;
   }
 
-  async run(input: HarnessInput): Promise<HarnessResult> {
-    const started = Date.now();
-    const configDir = await mkdtemp(join(tmpdir(), 'nhr-claude-'));
-    try {
-      const systemPromptFile = join(configDir, 'system-prompt.md');
-      await writeFile(systemPromptFile, input.systemPrompt);
-      const args = claudeArgs({ userMessage: input.userMessage, model: input.model, systemPromptFile, ...(this.#effort ? { effort: this.#effort } : {}) });
-      const env = claudeEnv(process.env, configDir, this.#conn);
-      const { code, stdout, stderr, timedOut } = await runProcess('claude', this.#bin, args, { cwd: input.workdir, env, timeoutMs: input.timeoutMs });
+  open(input: SessionInput): HarnessSession {
+    const sessionId = randomUUID();
+    let configDir: Promise<string> | undefined;
+    let turns = 0;
+    return {
+      send: async (userMessage: string, timeoutMs: number): Promise<HarnessResult> => {
+        // A fresh config folder per session: no user settings, plugins, memory or sessions from the runner.
+        configDir ??= mkdtemp(join(tmpdir(), 'nhr-claude-')).then(async (dir) => {
+          await writeFile(join(dir, 'system-prompt.md'), input.systemPrompt);
+          return dir;
+        });
+        return this.#turn(input, await configDir, sessionId, turns++ > 0, userMessage, timeoutMs);
+      },
+      close: async () => {
+        if (configDir) await rm(await configDir, { recursive: true, force: true });
+      },
+    };
+  }
 
-      const raw = redactStream(stdout);
-      if (timedOut) throw new HarnessError(timeoutMessage(input.timeoutMs), raw);
-      const parsed = parseStream(input.workdir, stdout);
-      if (code !== 0) {
-        const why = [...parsed.errors, stderr.trim().slice(-500)].filter((s) => s !== '').join('; ') || 'no error message';
-        throw new HarnessError(`claude exited with code ${code}: ${why}`, raw);
-      }
-      if (!parsed.sawResult) throw new HarnessError('claude ended without a result event', raw);
-      if (parsed.errors.length > 0) throw new HarnessError(`claude reported an error: ${parsed.errors.join('; ')}`, raw);
-      if (parsed.finalText.trim() === '') throw new HarnessError('the model gave no final answer', raw);
-      return {
-        finalText: parsed.finalText,
-        raw,
-        durationMs: Date.now() - started,
-        reads: parsed.reads,
-        costUsd: parsed.costUsd,
-        tokens: parsed.tokens,
-      };
-    } finally {
-      await rm(configDir, { recursive: true, force: true });
+  async #turn(input: SessionInput, configDir: string, sessionId: string, resume: boolean, userMessage: string, timeoutMs: number): Promise<HarnessResult> {
+    const started = Date.now();
+    const systemPromptFile = join(configDir, 'system-prompt.md');
+    const args = claudeArgs({ userMessage, model: input.model, systemPromptFile, sessionId, resume, ...(this.#effort ? { effort: this.#effort } : {}) });
+    const env = claudeEnv(process.env, configDir, this.#conn);
+    const { code, stdout, stderr, timedOut } = await runProcess('claude', this.#bin, args, { cwd: input.workdir, env, timeoutMs });
+
+    const raw = redactStream(stdout);
+    if (timedOut) throw new HarnessError(timeoutMessage(timeoutMs), raw);
+    const parsed = parseStream(input.workdir, stdout);
+    if (code !== 0) {
+      const why = [...parsed.errors, stderr.trim().slice(-500)].filter((s) => s !== '').join('; ') || 'no error message';
+      throw new HarnessError(`claude exited with code ${code}: ${why}`, raw);
     }
+    if (!parsed.sawResult) throw new HarnessError('claude ended without a result event', raw);
+    if (parsed.errors.length > 0) throw new HarnessError(`claude reported an error: ${parsed.errors.join('; ')}`, raw);
+    if (parsed.finalText.trim() === '') throw new HarnessError('the model gave no final answer', raw);
+    return {
+      finalText: parsed.finalText,
+      raw,
+      durationMs: Date.now() - started,
+      reads: parsed.reads,
+      costUsd: parsed.costUsd,
+      tokens: parsed.tokens,
+    };
   }
 }

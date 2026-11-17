@@ -6,7 +6,7 @@ CI has already passed. Tests, linters and type checks are green. Protected paths
 
 1. Read the PR title and body, then `pr.json` in the review folder to see every file that changed.
 2. Read every patch you were given. Do not skip any. List each file in `files_reviewed`.
-3. For every changed file, read the whole file, not only the patch. Read the old version in the review folder's `base/` when you need to see what the code did before. Your file reads are logged and checked. A file you did not open counts as not reviewed.
+3. For every changed file, read the whole file, not only the patch. Read the old version in the review folder's `base/` when you need to see what the code did before. Your file reads are logged and checked. A file you did not open counts as not reviewed. If you read a file in parts, your reads together must cover every line.
 4. Do the impact pass. Do not judge the diff on its own. Judge the change inside the code it lands in. For each change, ask:
    - What unchanged code in this file uses what changed? Does it still work? Look at every branch, not just the common path.
    - Who calls the changed functions, types or values? Search the repo for them and open the callers.

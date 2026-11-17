@@ -1,6 +1,6 @@
 import type { FileRead } from '../types.ts';
 import { agentEnv, relativePath, runProcess, timeoutMessage } from './process.ts';
-import { HarnessError, type Harness, type HarnessInput, type HarnessResult } from './types.ts';
+import { HarnessError, type Harness, type HarnessResult, type HarnessSession, type SessionInput } from './types.ts';
 
 export const AGENT_NAME = 'human-review';
 
@@ -108,6 +108,8 @@ export function redactEvents(stdout: string): string {
 
 export interface ParsedEvents {
   finalText: string;
+  /** The session the events belong to, needed to send a follow-up. */
+  sessionId?: string;
   reads: FileRead[];
   costUsd: number;
   tokens: { input: number; output: number };
@@ -122,15 +124,17 @@ export function parseEvents(workdir: string, stdout: string): ParsedEvents {
   let costUsd = 0;
   const tokens = { input: 0, output: 0 };
   const errors: string[] = [];
+  let sessionId: string | undefined;
   for (const line of stdout.split('\n')) {
     if (!line.trim().startsWith('{')) continue;
-    let e: { type?: string; part?: Record<string, unknown>; error?: unknown };
+    let e: { type?: string; sessionID?: unknown; part?: Record<string, unknown>; error?: unknown };
     try {
       e = JSON.parse(line);
     } catch {
       continue;
     }
     const part = e.part ?? {};
+    if (sessionId === undefined && typeof e.sessionID === 'string' && SESSION_ID.test(e.sessionID)) sessionId = e.sessionID;
     if (e.type === 'tool_use') {
       const r = readFromToolPart(workdir, part as ToolPart);
       if (r) reads.push(r);
@@ -147,7 +151,23 @@ export function parseEvents(workdir: string, stdout: string): ParsedEvents {
       errors.push(JSON.stringify(e.error ?? e).slice(0, 500));
     }
   }
-  return { finalText: (textByMessage.get(lastMessage) ?? []).join(''), reads, costUsd, tokens, errors };
+  return { finalText: (textByMessage.get(lastMessage) ?? []).join(''), ...(sessionId ? { sessionId } : {}), reads, costUsd, tokens, errors };
+}
+
+/** What a session ID may look like before it goes on the command line ("ses_..."). */
+const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9_]*$/;
+
+/** The arguments for one turn. A follow-up continues the session the first turn started. */
+export function opencodeArgs(input: { model: string; userMessage: string; sessionId?: string }): string[] {
+  return [
+    'run',
+    '--standalone',
+    ...(input.sessionId ? ['--session', input.sessionId] : []),
+    '--agent', AGENT_NAME,
+    '--model', input.model,
+    '--format', 'json',
+    input.userMessage,
+  ];
 }
 
 export class OpenCodeHarness implements Harness {
@@ -160,7 +180,22 @@ export class OpenCodeHarness implements Harness {
     this.#apiKey = settings.apiKey || undefined;
   }
 
-  async run(input: HarnessInput): Promise<HarnessResult> {
+  open(input: SessionInput): HarnessSession {
+    let sessionId: string | undefined;
+    let turns = 0;
+    return {
+      send: async (userMessage: string, timeoutMs: number): Promise<HarnessResult> => {
+        if (turns++ > 0 && !sessionId) throw new HarnessError('opencode reported no session ID, so the review cannot be continued');
+        const result = await this.#turn(input, userMessage, timeoutMs, sessionId);
+        sessionId ??= result.sessionId;
+        return result.result;
+      },
+      // OpenCode keeps the session in its own data folder, which the CI runner throws away.
+      close: async () => undefined,
+    };
+  }
+
+  async #turn(input: SessionInput, userMessage: string, timeoutMs: number, sessionId: string | undefined): Promise<{ result: HarnessResult; sessionId?: string }> {
     const started = Date.now();
     const env = {
       ...harnessEnv(process.env),
@@ -173,11 +208,11 @@ export class OpenCodeHarness implements Harness {
       OPENCODE_DISABLE_PROJECT_CONFIG: '1',
       OPENCODE_DISABLE_AUTOUPDATE: '1',
     };
-    const args = ['run', '--standalone', '--agent', AGENT_NAME, '--model', input.model, '--format', 'json', input.userMessage];
+    const args = opencodeArgs({ model: input.model, userMessage, ...(sessionId ? { sessionId } : {}) });
 
-    const { code, stdout, stderr, timedOut } = await runProcess('opencode', this.#bin, args, { cwd: input.workdir, env, timeoutMs: input.timeoutMs });
+    const { code, stdout, stderr, timedOut } = await runProcess('opencode', this.#bin, args, { cwd: input.workdir, env, timeoutMs });
     const raw = redactEvents(stdout);
-    if (timedOut) throw new HarnessError(timeoutMessage(input.timeoutMs), raw);
+    if (timedOut) throw new HarnessError(timeoutMessage(timeoutMs), raw);
     const parsed = parseEvents(input.workdir, stdout);
     if (code !== 0) {
       const why = [...parsed.errors, stderr.trim().slice(-500)].filter((s) => s !== '').join('; ') || 'no error message';
@@ -186,12 +221,15 @@ export class OpenCodeHarness implements Harness {
     if (parsed.errors.length > 0) throw new HarnessError(`opencode reported an error: ${parsed.errors.join('; ')}`, raw);
     if (parsed.finalText.trim() === '') throw new HarnessError('the model gave no final answer', raw);
     return {
-      finalText: parsed.finalText,
-      raw,
-      durationMs: Date.now() - started,
-      reads: parsed.reads,
-      costUsd: parsed.costUsd,
-      tokens: parsed.tokens,
+      result: {
+        finalText: parsed.finalText,
+        raw,
+        durationMs: Date.now() - started,
+        reads: parsed.reads,
+        costUsd: parsed.costUsd,
+        tokens: parsed.tokens,
+      },
+      ...(parsed.sessionId ? { sessionId: parsed.sessionId } : {}),
     };
   }
 }

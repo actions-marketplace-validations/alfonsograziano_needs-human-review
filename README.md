@@ -174,7 +174,7 @@ The reviewer is told to judge the change inside the code it lands in, not the di
 
 Then the action checks the work with code, not trust:
 
-- **Proof of reading.** The agent's tool-call log shows every file it opened and which lines it got back. The action checks the log and confirms that every changed file was read in full. A file the agent never opened makes the verdict invalid.
+- **Proof of reading.** The agent's tool-call log shows every file it opened and which lines it got back. The action checks the log and confirms that every changed file was read in full. If the agent answers with lines it never read, the action tells it exactly which ones and asks it to read them and answer again, up to twice. A file still not read after that makes the verdict invalid.
 - **Strict verdict.** The answer must be one JSON object with fixed fields. Missing fields, extra fields, a percentage instead of stars, or "safe" with high risk all make it invalid.
 - **No empty impact pass.** "Safe" on a change to code that runs, with nothing in `affected_code`, is invalid.
 

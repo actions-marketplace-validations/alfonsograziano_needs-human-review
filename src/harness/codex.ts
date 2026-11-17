@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import type { FileRead } from '../types.ts';
 import { agentEnv, runProcess, timeoutMessage } from './process.ts';
 import { callKey } from './read-tools.ts';
-import { HarnessError, type Harness, type HarnessInput, type HarnessResult } from './types.ts';
+import { HarnessError, type Harness, type HarnessResult, type HarnessSession, type SessionInput } from './types.ts';
 
 /** The MCP server that gives Codex its only tools: read, grep and glob inside the workdir. */
 export const READ_TOOLS_SERVER = fileURLToPath(new URL('./read-tools-server.ts', import.meta.url));
@@ -59,6 +59,8 @@ export interface CodexArgsInput {
   readLog: string;
   baseUrl?: string;
   effort?: string;
+  /** The thread to continue. Unset on the first turn. */
+  resume?: string;
 }
 
 /**
@@ -75,6 +77,8 @@ export interface CodexArgsInput {
  *   are read-tools-server's read, grep and glob, approved up front because
  *   they only read, with the output limit set so Codex never cuts a result.
  * - `--sandbox read-only` stays on as a second wall.
+ * - The thread is saved in the session's own CODEX_HOME (removed at the end),
+ *   so a follow-up can continue it with `exec resume <thread>`.
  */
 export function codexArgs(input: CodexArgsInput): string[] {
   const set = (key: string, value: string | string[] | number | boolean) => ['-c', `${key}=${typeof value === 'string' || Array.isArray(value) ? toml(value) : String(value)}`];
@@ -82,7 +86,6 @@ export function codexArgs(input: CodexArgsInput): string[] {
   return [
     'exec',
     '--json',
-    '--ephemeral',
     '--ignore-user-config',
     '--ignore-rules',
     '--strict-config',
@@ -109,6 +112,7 @@ export function codexArgs(input: CodexArgsInput): string[] {
     ...set(`${server}.enabled_tools`, [...MCP_TOOLS]),
     ...MCP_TOOLS.flatMap((t) => set(`${server}.tools.${t}.output_token_limit`, TOOL_OUTPUT_TOKEN_LIMIT)),
     ...DISABLED_FEATURES.flatMap((f) => ['--disable', f]),
+    ...(input.resume ? ['resume', input.resume] : []),
     // Everything after -- is the prompt, even if it starts with a dash.
     '--',
     input.userMessage,
@@ -137,6 +141,7 @@ interface CodexItem {
 
 interface CodexEvent {
   type?: string;
+  thread_id?: unknown;
   item?: CodexItem;
   usage?: { input_tokens?: number; cached_input_tokens?: number; output_tokens?: number };
   error?: { message?: string };
@@ -145,6 +150,8 @@ interface CodexEvent {
 
 export interface ParsedCodexStream {
   finalText: string;
+  /** From thread.started, needed to send a follow-up. */
+  threadId?: string;
   /** The arguments of every read call that completed, in the agent's own log. */
   completedReads: string[];
   tokens: { input: number; output: number };
@@ -157,6 +164,9 @@ function isReadCall(item: CodexItem): boolean {
   return item.type === 'mcp_tool_call' && item.server === MCP_SERVER && item.tool === 'read';
 }
 
+/** Codex thread IDs are UUIDs. Anything else never reaches the command line. */
+const THREAD_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** Parses `codex exec --json` output: one JSON event per line. */
 export function parseCodexStream(stdout: string): ParsedCodexStream {
   const parsed: ParsedCodexStream = { finalText: '', completedReads: [], tokens: { input: 0, output: 0 }, errors: [], sawEnd: false };
@@ -168,7 +178,9 @@ export function parseCodexStream(stdout: string): ParsedCodexStream {
     } catch {
       continue;
     }
-    if (e.type === 'item.completed' && e.item) {
+    if (e.type === 'thread.started' && typeof e.thread_id === 'string' && THREAD_ID.test(e.thread_id)) {
+      parsed.threadId = e.thread_id;
+    } else if (e.type === 'item.completed' && e.item) {
       if (e.item.type === 'agent_message' && typeof e.item.text === 'string') parsed.finalText = e.item.text;
       if (isReadCall(e.item) && e.item.status === 'completed' && e.item.arguments && typeof e.item.arguments === 'object') {
         parsed.completedReads.push(callKey(e.item.arguments as Record<string, unknown>));
@@ -248,45 +260,66 @@ export class CodexHarness implements Harness {
     this.#effort = settings.effort || undefined;
   }
 
-  async run(input: HarnessInput): Promise<HarnessResult> {
-    const started = Date.now();
-    const home = await mkdtemp(join(tmpdir(), 'nhr-codex-'));
-    try {
-      const systemPromptFile = join(home, 'system-prompt.md');
-      const readLog = join(home, 'reads.jsonl');
-      await writeFile(systemPromptFile, input.systemPrompt);
-      await writeFile(readLog, '');
-      const args = codexArgs({
-        userMessage: input.userMessage,
-        model: input.model,
-        workdir: input.workdir,
-        systemPromptFile,
-        readLog,
-        ...(this.#baseUrl ? { baseUrl: this.#baseUrl } : {}),
-        ...(this.#effort ? { effort: this.#effort } : {}),
-      });
-      const env = codexEnv(process.env, home, this.#apiKey);
-      const { code, stdout, stderr, timedOut } = await runProcess('codex', this.#bin, args, { cwd: input.workdir, env, timeoutMs: input.timeoutMs });
+  open(input: SessionInput): HarnessSession {
+    let home: Promise<string> | undefined;
+    let threadId: string | undefined;
+    let turns = 0;
+    return {
+      send: async (userMessage: string, timeoutMs: number): Promise<HarnessResult> => {
+        const turn = ++turns;
+        if (turn > 1 && !threadId) throw new HarnessError('codex reported no thread ID, so the review cannot be continued');
+        // A fresh home per session: no login, config, sessions, skills or plugins from the runner.
+        home ??= mkdtemp(join(tmpdir(), 'nhr-codex-')).then(async (dir) => {
+          await writeFile(join(dir, 'system-prompt.md'), input.systemPrompt);
+          return dir;
+        });
+        const result = await this.#turn(input, await home, turn, threadId, userMessage, timeoutMs);
+        threadId ??= result.threadId;
+        return result.result;
+      },
+      close: async () => {
+        if (home) await rm(await home, { recursive: true, force: true });
+      },
+    };
+  }
 
-      const raw = redactCodexStream(stdout);
-      if (timedOut) throw new HarnessError(timeoutMessage(input.timeoutMs), raw);
-      const parsed = parseCodexStream(stdout);
-      if (code !== 0) {
-        const why = [...parsed.errors, stderr.trim().slice(-500)].filter((s) => s !== '').join('; ') || 'no error message';
-        throw new HarnessError(`codex exited with code ${code}: ${why}`, raw);
-      }
-      if (!parsed.sawEnd) throw new HarnessError('codex ended without finishing the turn', raw);
-      if (parsed.errors.length > 0) throw new HarnessError(`codex reported an error: ${parsed.errors.join('; ')}`, raw);
-      if (parsed.finalText.trim() === '') throw new HarnessError('the model gave no final answer', raw);
-      return {
+  async #turn(input: SessionInput, home: string, turn: number, resume: string | undefined, userMessage: string, timeoutMs: number): Promise<{ result: HarnessResult; threadId?: string }> {
+    const started = Date.now();
+    // One read log per turn, so a turn only counts the reads it made.
+    const readLog = join(home, `reads-${turn}.jsonl`);
+    await writeFile(readLog, '');
+    const args = codexArgs({
+      userMessage,
+      model: input.model,
+      workdir: input.workdir,
+      systemPromptFile: join(home, 'system-prompt.md'),
+      readLog,
+      ...(this.#baseUrl ? { baseUrl: this.#baseUrl } : {}),
+      ...(this.#effort ? { effort: this.#effort } : {}),
+      ...(resume ? { resume } : {}),
+    });
+    const env = codexEnv(process.env, home, this.#apiKey);
+    const { code, stdout, stderr, timedOut } = await runProcess('codex', this.#bin, args, { cwd: input.workdir, env, timeoutMs });
+
+    const raw = redactCodexStream(stdout);
+    if (timedOut) throw new HarnessError(timeoutMessage(timeoutMs), raw);
+    const parsed = parseCodexStream(stdout);
+    if (code !== 0) {
+      const why = [...parsed.errors, stderr.trim().slice(-500)].filter((s) => s !== '').join('; ') || 'no error message';
+      throw new HarnessError(`codex exited with code ${code}: ${why}`, raw);
+    }
+    if (!parsed.sawEnd) throw new HarnessError('codex ended without finishing the turn', raw);
+    if (parsed.errors.length > 0) throw new HarnessError(`codex reported an error: ${parsed.errors.join('; ')}`, raw);
+    if (parsed.finalText.trim() === '') throw new HarnessError('the model gave no final answer', raw);
+    return {
+      result: {
         finalText: parsed.finalText,
         raw,
         durationMs: Date.now() - started,
         reads: matchReads(await readFile(readLog, 'utf8'), parsed.completedReads),
         tokens: parsed.tokens,
-      };
-    } finally {
-      await rm(home, { recursive: true, force: true });
-    }
+      },
+      ...(parsed.threadId ? { threadId: parsed.threadId } : {}),
+    };
   }
 }
